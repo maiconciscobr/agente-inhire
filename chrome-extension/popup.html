@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 320px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #333;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #6B46C1;
+    }
+    .status {
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+    .info { background: #EBF5FF; color: #1A56DB; }
+    .success { background: #DEF7EC; color: #03543F; }
+    .error { background: #FDE8E8; color: #9B1C1C; }
+    .loading { background: #FFF3CD; color: #856404; }
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #6B46C1;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    button:hover { background: #553C9A; }
+    button:disabled { background: #CBD5E0; cursor: not-allowed; }
+    .result {
+      margin-top: 12px;
+      padding: 10px;
+      background: #F7FAFC;
+      border-radius: 6px;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    input {
+      width: calc(100% - 16px);
+      padding: 6px 8px;
+      border: 1px solid #E2E8F0;
+      border-radius: 4px;
+      margin: 4px 0 8px;
+      font-size: 13px;
+    }
+    label { font-size: 12px; color: #718096; }
+  </style>
+</head>
+<body>
+  <h2>🎯 InHire Agent</h2>
+
+  <div id="status" class="status info">
+    Abra um perfil do LinkedIn e clique em "Analisar"
+  </div>
+
+  <label>Seu Slack User ID (opcional):</label>
+  <input type="text" id="slackUserId" placeholder="ex: U0ABC123">
+
+  <button id="analyzeBtn">📋 Analisar Perfil</button>
+
+  <div id="result" class="result" style="display:none;"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

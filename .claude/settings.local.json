@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -i \"C:/Users/maico/.ssh/n8n_rescue_key\" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p 22 root@65.109.160.97 \"echo connected\")",
+      "Bash(ssh -i \"C:/Users/maico/.ssh/n8n_rescue_key\" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p 2222 root@65.109.160.97 \"echo connected\")",
+      "Bash(ssh -i \"C:/Users/maico/.ssh/n8n_rescue_key\" -o StrictHostKeyChecking=no root@65.109.160.97 \"python3 --version && which nginx && which certbot && which redis-cli && which docker && ls /var/www/ 2>/dev/null && cat /etc/os-release | head -3 && free -h | head -2 && df -h / | tail -1\")",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(pip install:*)",
+      "Bash(ssh -i \"C:/Users/maico/.ssh/n8n_rescue_key\" -o StrictHostKeyChecking=no root@65.109.160.97 \"pip3 install python-docx 2>&1 | tail -3\")",
+      "WebSearch",
+      "Bash(where claude:*)",
+      "Read(//c/Users/maico/**)",
+      "Bash(npm list:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "You are a documentation updater for the Eli (Agente InHire) project. Review what was done in this session and update the project documentation.\n\n1. Read DIARIO_DO_PROJETO.md and check if the current session is already documented. If not, add a new session entry at the end (before the version history table) summarizing: what was done, bugs fixed, features added, discoveries, and pending items.\n\n2. Read the memory files in the Claude memory directory and update them if needed:\n   - project_overview.md — update if architecture or features changed\n   - session1_blockers.md — update resolved/pending items\n   - api_reference.md — update if new endpoints were discovered\n\n3. Update MEMORY.md index if any memory file descriptions changed.\n\nBe concise. Only update if there were meaningful changes in this session. If nothing significant happened (just questions, no code changes), skip the update.\n\nMemory directory: C:\\Users\\maico\\.claude\\projects\\c--Users-maico-OneDrive-Desktop-inhire-agente-inhire\\memory\\",
+            "timeout": 120,
+            "model": "claude-sonnet-4-6",
+            "statusMessage": "Atualizando documentação do projeto..."
+          }
+        ]
+      }
+    ]
+  }
+}

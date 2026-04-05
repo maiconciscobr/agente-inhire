@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "InHire Agent - Profile Analyzer",
+  "version": "1.0.0",
+  "description": "Captura perfis do LinkedIn e envia para o Agente InHire analisar",
+  "permissions": ["activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
