@@ -1915,3 +1915,57 @@ Mapear todas as limitações do Agente Eli comparando com o que o InHire oferece
 |---|---|
 | `LIMITACOES_AGENTE_ELI.md` | Novo — mapa completo InHire vs Eli (18 áreas) |
 | `API_GAPS_PARA_DEVS.md` | Reescrito com 4 gaps detalhados |
+
+---
+
+## Sessão 33 — 6 de abril de 2026
+
+### Objetivo
+
+Investigar 403 nos endpoints de agendamento e carta oferta, implementar quick wins.
+
+### Descobertas (investigação no servidor de produção)
+
+| Endpoint | Resultado | Causa do 403 anterior |
+|---|---|---|
+| `POST /appointments/{id}/create` com `provider: "manual"` | **201 Created** | Payload enviava `provider: "google"` sem calendário |
+| `POST /offer-letters` com template ID correto | **201 Created** | Token expirado ou templateId errado (usava `originId`) |
+| `GET /offer-letters/templates` | **200 OK** | — |
+| `GET /talents/name/{name}` | **200 OK** | — |
+| `POST /emails/submissions` | **403 Forbidden** | Service account sem permissão no comms-svc |
+| `GET /emails/templates` | **403 Forbidden** | Service account sem permissão no comms-svc |
+
+### O que foi feito
+
+**1. Agendamento de entrevista → Layer 1 funcional**
+- `_handle_scheduling_input()` agora monta payload com `provider: "manual"`, campos obrigatórios corretos (`name`, `startDateTime`, `endDateTime`, `userEmail`, `guests`, `hasCallLink`)
+- Claude extrai candidato + data + duração da mensagem natural
+- Removido fallback de 403
+
+**2. Carta oferta → Layer 1 funcional**
+- `_start_offer_flow()` e `_create_and_send_offer()` — removidos fallbacks de 403
+- `templateId` usa campo `id` (não `originId`)
+- Variáveis padrão: `nomeCargo`, `nomeCandidato`, `salario`, `dataInicio`
+
+**3. slack.py — despacho atualizado**
+- `agendar_entrevista` e `carta_oferta` movidos de `_NOT_AVAILABLE_MESSAGES` (Layer 2) para handlers funcionais (Layer 1)
+- `_NOT_AVAILABLE_MESSAGES` agora está vazio
+
+**4. API_GAPS_PARA_DEVS.md atualizado**
+- Gaps 1 e 2 marcados como ✅ resolvidos com payloads confirmados
+- Gap 3 marcado como ⚠️ parcial (nome funciona, full-text precisa Typesense)
+- Gap 4 revelou que email retorna 403 (novo bloqueio)
+
+### Deploy
+- 3 arquivos atualizados no servidor via SCP
+- `systemctl restart agente-inhire` — serviço online, health OK
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `routers/slack.py` | +handlers agendar_entrevista e carta_oferta como Layer 1 |
+| `routers/handlers/interviews.py` | +payload provider:manual, +campos corretos, -fallback 403 |
+| `routers/handlers/helpers.py` | _NOT_AVAILABLE_MESSAGES esvaziado |
+| `API_GAPS_PARA_DEVS.md` | Gaps 1-2 resolvidos, status atualizado |
+| `CLAUDE.md` | +melhorias 23-24, Layer 2 → Layer 1 |

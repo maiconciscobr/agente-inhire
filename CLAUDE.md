@@ -82,9 +82,9 @@ handlers = {
 - `ver_memorias` → `_show_memories()` (padrões, config, insights semanais)
 - `conversa_livre` → `claude.chat()` direto
 
-**Layer 2 — Retorna "em breve" (bloqueio externo):**
-- `agendar_entrevista` — service account sem calendário
-- `carta_oferta` — pendente validação
+**Layer 1 — Funcional (resolvido sessão 33):**
+- `agendar_entrevista` → `_start_scheduling()` (provider: manual, sem calendário)
+- `carta_oferta` → `_start_offer_flow()` (template + ClickSign)
 
 ---
 
@@ -163,7 +163,7 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 
 | Feature | Bloqueio | Quem resolve | Status |
 |---|---|---|---|
-| Agendamento de entrevistas | Service account sem calendário integrado | André (dev InHire) | Aguardando |
+| Agendamento de entrevistas | ~~Service account sem calendário~~ | ~~André~~ | ✅ Resolvido (provider: manual) |
 | Mover candidatos via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
 | Reprovar em lote via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
 | InTerview (WhatsApp) | Sem API pública | InHire | Sem previsão |
@@ -197,6 +197,8 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 20 | **Tool ver_memorias** — recrutador vê padrões aprendidos, config e contexto ativo | ✅ | 30 |
 | 21 | **Registro utilidade alertas** — salva tipo/timestamp de cada alerta, infere resposta em 30min | ✅ | 30 |
 | 22 | **Consolidação semanal (mini KAIROS)** — cron seg 9:30 BRT, Claude resume padrões em 3 frases | ✅ | 30 |
+| 23 | **Agendamento funcional** — provider:manual, sem calendário, registra no InHire | ✅ | 33 |
+| 24 | **Carta oferta funcional** — template + ClickSign + aprovação + envio ao candidato | ✅ | 33 |
 
 ---
 
