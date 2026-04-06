@@ -259,5 +259,25 @@ class InHireClient:
     async def get_offer_settings(self) -> dict:
         return await self._request("GET", "/offer-letters/settings")
 
+    # --- Email (base path: /comms/emails) ---
+    async def send_email(self, to_job_talent_ids: list[str], subject: str, body: str,
+                         from_email: str = "noreply@inhire.app") -> None:
+        """Send email to candidates via InHire comms service (Amazon SES)."""
+        logger.info("Enviando email: %s para %d destinatários", subject, len(to_job_talent_ids))
+        await self._request(
+            "POST", "/comms/emails/submissions",
+            json={
+                "from": from_email,
+                "subject": subject,
+                "body": body,
+                "emailProvider": "amazon",
+                "jobTalentIds": to_job_talent_ids,
+            },
+        )
+
+    async def list_email_templates(self) -> list:
+        """List available email templates."""
+        return await self._request("GET", "/comms/emails/templates")
+
     async def close(self):
         await self._client.aclose()
