@@ -1869,3 +1869,49 @@ Deploy da sessão 30 no servidor + documentar gaps da API para o André (dev InH
 |---|---|
 | `API_GAPS_PARA_DEVS.md` | Reescrito com 4 gaps detalhados + contexto técnico |
 | Servidor `/var/www/agente-inhire/` | Deploy dos 6 arquivos da sessão 30 |
+
+---
+
+## Sessão 32 — 6 de abril de 2026
+
+### Objetivo
+
+Mapear todas as limitações do Agente Eli comparando com o que o InHire oferece.
+
+### O que foi feito
+
+**1. Pesquisa completa no Help Center do InHire**
+- MCP InHire Help Center deu erro (proxy), então pesquisa feita via WebSearch em help.inhire.app
+- 8 buscas cobrindo: vagas, divulgação, formulários, triagem IA, entrevistas, scorecard, oferta, automações, relatórios, hunting, extensões, DISC, Mindsight, diversidade, Smart CV, careers page
+
+**2. LIMITACOES_AGENTE_ELI.md**
+- Documento com 18 áreas mapeadas organizadas em 11 seções:
+  1. Criação e configuração de vagas (10 campos que o Eli não preenche)
+  2. Divulgação de vagas (portais, job boards, careers page, indicação)
+  3. Comunicação com candidatos (email, WhatsApp, devolutiva direta)
+  4. Testes e avaliações (DISC, Mindsight, testes personalizados, automação)
+  5. Entrevistas (agendamento, interview kit, scorecard, Google Meet)
+  6. Carta oferta (templates, aprovação, envio)
+  7. Banco de talentos (busca, filtros, reaproveitamento)
+  8. Analytics e relatórios (dashboard, funil, diversidade)
+  9. Diversidade e inclusão (módulo, acessibilidade)
+  10. Smart CV (gerar, compartilhar, ocultar campos)
+  11. Extensões Chrome (hunting, interview kit)
+- Resumo por prioridade:
+  - 3 que só precisam liberar API (403)
+  - 6 que precisam de endpoints novos
+  - 3 que dependem de integração externa
+  - 6 fora do escopo do agente (UI/visual)
+
+**3. API_GAPS_PARA_DEVS.md reescrito**
+- 4 gaps detalhados com endpoints, payloads, erros e perguntas para o André
+
+**4. Mensagem para o time de produto**
+- Texto completo com o que o Eli faz, o que o recrutador ainda precisa fazer no InHire, e o que vai fazer quando os gaps forem resolvidos
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `LIMITACOES_AGENTE_ELI.md` | Novo — mapa completo InHire vs Eli (18 áreas) |
+| `API_GAPS_PARA_DEVS.md` | Reescrito com 4 gaps detalhados |
