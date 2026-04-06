@@ -255,6 +255,17 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "ver_memorias",
+        "description": (
+            "Mostra o que o Eli sabe/lembra sobre o recrutador: padrões de decisão, "
+            "vagas acompanhadas, configurações personalizadas. "
+            "Use quando o recrutador perguntar 'o que você sabe sobre mim?', "
+            "'o que você lembra?', 'suas memórias', 'meu perfil', ou quiser saber "
+            "o que o agente aprendeu sobre ele."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "conversa_livre",
         "description": (
             "Responde perguntas gerais sobre recrutamento, processos do InHire, ou qualquer assunto "

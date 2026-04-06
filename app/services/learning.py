@@ -94,6 +94,25 @@ class LearningService:
             logger.warning("Erro ao buscar padrões: %s", e)
             return {}
 
+    def get_all_patterns(self, recruiter_id: str) -> list[dict]:
+        """Get patterns for ALL jobs a recruiter has interacted with.
+        Returns list of {"job_id": ..., "patterns": {...}} dicts.
+        """
+        if not self._redis:
+            return []
+
+        results = []
+        try:
+            prefix = f"{REDIS_PREFIX}{recruiter_id}:"
+            for key in self._redis.scan_iter(f"{prefix}*"):
+                job_id = key.replace(prefix, "")
+                patterns = self.get_patterns(recruiter_id, job_id)
+                if patterns and patterns.get("total_decisions", 0) > 0:
+                    results.append({"job_id": job_id, "patterns": patterns})
+        except Exception as e:
+            logger.warning("Erro ao buscar todos os padrões: %s", e)
+        return results
+
     def get_insights_text(self, recruiter_id: str, job_id: str) -> str:
         """Get human-readable insights for Claude to use in shortlist ranking."""
         patterns = self.get_patterns(recruiter_id, job_id)

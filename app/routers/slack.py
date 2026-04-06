@@ -819,6 +819,9 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                 "Diz qual delas que eu te explico o passo a passo!",
             )
 
+    elif tool == "ver_memorias":
+        await _show_memories(conv, app, channel_id)
+
     elif tool == "conversa_livre":
         response = await claude.chat(conv.messages)
         await _send(conv, slack, channel_id, response)
@@ -865,7 +868,80 @@ async def _handle_monitoring(conv, app, channel_id: str, text: str):
 # ==============================================================================
 
 
-# Kept inline: _list_jobs (small utility used by _handle_idle)
+# Kept inline: _show_memories, _list_jobs (small utilities used by _handle_idle)
+
+async def _show_memories(conv, app, channel_id: str):
+    """Show what Eli knows/remembers about the recruiter."""
+    slack = app.state.slack
+    learning = app.state.learning
+    user_mapping = app.state.user_mapping
+    user_id = conv.user_id
+
+    parts = ["Aqui está o que aprendi trabalhando com você:\n"]
+
+    # 1. User config
+    user = user_mapping.get_user(user_id)
+    if user:
+        name = user.get("inhire_name", "")
+        if name:
+            parts.append(f"*Seu perfil:* {name} ({user.get('inhire_email', '')})")
+        config_lines = []
+        start = user.get("working_hours_start", 8)
+        end = user.get("working_hours_end", 19)
+        if start != 8 or end != 19:
+            config_lines.append(f"Horário personalizado: {start}h-{end}h")
+        max_msgs = user.get("max_proactive_messages", 3)
+        if max_msgs != 3:
+            config_lines.append(f"Limite de alertas diários: {max_msgs}")
+        comms = user.get("comms_enabled", True)
+        if not comms:
+            config_lines.append("Comunicação automática com candidatos: *desativada*")
+        if config_lines:
+            parts.append("*Configurações:*\n" + "\n".join(f"• {l}" for l in config_lines))
+
+    # 2. Active conversation context
+    job_name = conv.get_context("current_job_name")
+    if job_name:
+        parts.append(f"*Vaga ativa na conversa:* {job_name}")
+    shortlist = conv.get_context("shortlist_candidates")
+    if shortlist:
+        parts.append(f"*Shortlist carregado:* {len(shortlist)} candidatos")
+
+    # 3. Decision patterns per job
+    all_patterns = learning.get_all_patterns(user_id)
+    if all_patterns:
+        parts.append("\n*Padrões de decisão por vaga:*")
+        for entry in all_patterns[:5]:
+            p = entry["patterns"]
+            job_id_short = entry["job_id"][:8]
+            total = p.get("total_decisions", 0)
+            rate = p.get("approval_rate", 0)
+            line = f"• Vaga `{job_id_short}…` — {total} decisões, {rate:.0%} aprovação"
+            reasons = p.get("top_rejection_reasons", [])
+            if reasons:
+                top = ", ".join(r[0] for r in reasons[:2])
+                line += f" (reprovações: {top})"
+            sal = p.get("rejected_salary_avg")
+            if sal:
+                line += f" | pretensão rejeitada média: R${sal:,.0f}"
+            parts.append(line)
+    else:
+        parts.append("_Ainda não tenho padrões de decisão registrados — com o tempo, vou aprendendo seu estilo!_")
+
+    # 4. Weekly insight (if available from mini-KAIROS)
+    try:
+        import redis as redis_lib
+        from config import get_settings
+        r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+        insight = r.get(f"inhire:insights:{user_id}")
+        if insight:
+            parts.append(f"\n*Resumo do seu estilo (última análise):*\n{insight}")
+    except Exception:
+        pass
+
+    await _send(conv, slack, channel_id, "\n\n".join(parts))
+
+
 async def _list_jobs(conv, app, channel_id: str):
     """List recent jobs from InHire."""
     slack = app.state.slack
