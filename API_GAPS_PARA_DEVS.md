@@ -111,23 +111,19 @@ O Eli usa `GET /talents/name/{name}` como busca básica enquanto o endpoint full
 
 ---
 
-## Gap 4 — Comunicação com candidato — PARCIALMENTE RESOLVIDO
+## Gap 4 — Comunicação com candidato — EMAIL RESOLVIDO, WhatsApp pendente
 
-### Status: ⚠️ Email com 403, WhatsApp sem API
+### Email: ✅ FUNCIONAL
 
-**Teste realizado:**
-- `POST /emails/submissions` → **403 Forbidden**
-- `GET /emails/templates` → **403 Forbidden**
-- `POST /private/emails/submissions` → **403 Forbidden**
+**O 403 era base path errado.** O endpoint correto é `/comms/emails/submissions` (não `/emails/submissions`).
 
-O serviço de email (`comms-svc`) rejeita a service account. Pode ser uma questão de permissão CASL ou configuração do tenant.
+- `POST /comms/emails/submissions` com JWT + `emailProvider: "amazon"` → **204 OK**
+- `GET /comms/emails/templates` → **200 OK** (templates de devolutiva, abordagem, etc.)
 
-### Ação necessária para email
-1. Verificar se a service account tem role/permissão para usar o `comms-svc`
-2. Verificar se o tenant `demo` tem `comms-svc` habilitado
-3. Alternativa: usar endpoint `POST /private/emails/submissions` (service-to-service) se aceitar API key
+Métodos `send_email()` e `list_email_templates()` implementados no `inhire_client.py`.
 
-### WhatsApp / InTerview
+### WhatsApp / InTerview: ❌ Sem API
+
 - Sem API pública para envio direto de mensagens
 - O WhatsApp Assistant é unidirecional (candidato → sistema)
 - Ação: criar endpoint `POST /assistant/send` no WhatsApp Assistant para envio proativo
@@ -138,14 +134,28 @@ O serviço de email (`comms-svc`) rejeita a service account. Pode ser uma quest�
 
 | Gap | Status anterior | Status atual | Ação |
 |---|---|---|---|
-| **1. Agendamento** | ❌ 403 | ✅ **FUNCIONAL** | Implementado com `provider: "manual"` |
-| **2. Carta oferta** | ❌ 403 | ✅ **FUNCIONAL** | Implementado com template ID correto |
+| **1. Agendamento** | ❌ 403 | ✅ **FUNCIONAL + TESTADO E2E** | `provider: "manual"`, 33/37 PASS |
+| **2. Carta oferta** | ❌ 403 | ✅ **FUNCIONAL + TESTADO E2E** | Template ID correto (campo `id`), 33/37 PASS |
 | **3. Busca talentos** | ❌ Sem endpoint | ⚠️ Parcial | Nome funciona, full-text precisa de endpoint Typesense |
-| **4. Email** | ❌ Sem teste | ❌ 403 | Investigar permissão da service account no comms-svc |
-| **4. WhatsApp** | ❌ Sem API | ❌ Sem API | Criar endpoint de envio no WhatsApp Assistant |
+| **4. Email** | ❌ 403 | ✅ **FUNCIONAL** | Base path `/comms/`, emailProvider `amazon` |
+| **5. WhatsApp** | ❌ Sem API | ❌ Sem API | Criar endpoint de envio no WhatsApp Assistant |
+
+### Bugs corrigidos durante testes E2E
+- `talent.name` nested (API retorna `talent: {name: "..."}`, não `talentName`)
+- `endDateTime` vazio (Claude nem sempre retorna — agora calcula start + 1h)
+- `userEmail` vazio (busca do `user_mapping` como fallback)
+- `current_job_id` não setado no contexto antes de chamar handlers
 
 ### O que mudou no Agente Eli
 - `agendar_entrevista` movido de Layer 2 → **Layer 1 (funcional)**
 - `carta_oferta` movido de Layer 2 → **Layer 1 (funcional)**
-- Payload de agendamento corrigido (provider manual, campos obrigatórios)
-- Fallbacks de 403 removidos (não aplicam mais)
+- `send_email()` e `list_email_templates()` adicionados ao `inhire_client.py`
+- Helpers `_talent_name()`, `_talent_email()`, `_talent_stage()` para extração consistente
+- Test suite expandido de 16 para 32 cenários (37 steps)
+
+### Gaps que ainda dependem de desenvolvimento no backend InHire
+
+| Gap | O que precisa | Esforço estimado |
+|---|---|---|
+| Busca full-text banco de talentos | `POST /talents/search-engine/key` (replicar padrão do job-talents-svc) | ~2-4h |
+| WhatsApp envio proativo | `POST /assistant/send` no WhatsApp Assistant | ~1-2h (fase 1) |
