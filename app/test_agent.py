@@ -3,9 +3,12 @@ Eli — Agente Inteligente de Testes v2
 Usa Claude para avaliar semanticamente as respostas do Eli.
 Cada cenário é independente (reseta antes de rodar).
 
-Cobertura: onboarding, abertura de vaga, hunting, candidatos, mover, reprovar,
-status, listagem, conversa livre, guia InHire, toggle, cancelar, lock/dedup, shortlist,
-agendar entrevista, carta oferta, ver memórias.
+Cobertura: onboarding, abertura de vaga (completa com aprovação), hunting, análise de perfil,
+candidatos, mover (shortlist + aprovação), reprovar (completo), status/SLA, listagem,
+conversa livre (2 temas), guia InHire (divulgação, triagem, scorecard, automações),
+toggle comunicação, cancelar, lock/dedup, shortlist, agendar entrevista (completo: lista + agenda),
+carta oferta (completo: lista + dados + aprovação), ver memórias (2 variações),
+sem vaga (pede ID), msg ambígua, sequência rápida.
 
 Uso: python test_agent.py
 """
@@ -287,9 +290,9 @@ SCENARIOS = [
             },
         ],
     },
-    # ── Bloco 9: Agendamento de entrevista (sessão 33) ──
+    # ── Bloco 9: Agendamento de entrevista — fluxo completo ──
     {
-        "name": "Agendar entrevista",
+        "name": "Agendar entrevista — listar candidatos",
         "reset": True,
         "steps": [
             {
@@ -303,9 +306,25 @@ SCENARIOS = [
             },
         ],
     },
-    # ── Bloco 10: Carta oferta (sessão 33) ──
     {
-        "name": "Carta oferta",
+        "name": "Agendar entrevista — selecionar candidato e data",
+        "reset": False,
+        "steps": [
+            {
+                "send": "1 quinta-feira às 14h",
+                "expect": (
+                    "Deve confirmar a criação do agendamento OU pedir confirmação. "
+                    "Pode mencionar 'agendada', 'registrado', 'appointment', 'entrevista', "
+                    "ou mostrar dados do agendamento (candidato, data). "
+                    "NÃO deve dar erro técnico ou pedir a vaga novamente."
+                ),
+                "max_wait": 60,
+            },
+        ],
+    },
+    # ── Bloco 10: Carta oferta — fluxo completo ──
+    {
+        "name": "Carta oferta — listar candidatos",
         "reset": True,
         "steps": [
             {
@@ -320,7 +339,39 @@ SCENARIOS = [
             },
         ],
     },
-    # ── Bloco 11: Ver memórias (sessão 30) ──
+    {
+        "name": "Carta oferta — fornecer dados",
+        "reset": False,
+        "steps": [
+            {
+                "send": "1 salário 15000 aprovador maiconcisco@gmail.com",
+                "expect": (
+                    "Deve mostrar resumo da oferta com candidato, salário e aprovador, "
+                    "e pedir confirmação (botões de aprovação). "
+                    "Pode mostrar 'Carta Oferta', salário, aprovador. "
+                    "NÃO deve dar erro técnico."
+                ),
+                "expect_buttons": True,
+                "max_wait": 60,
+            },
+        ],
+    },
+    {
+        "name": "Carta oferta — aprovar e criar",
+        "reset": False,
+        "steps": [
+            {
+                "action": "approve",
+                "callback": "offer_approval",
+                "expect": (
+                    "Deve confirmar criação da carta oferta OU informar erro de template/dados. "
+                    "Se criou: deve mostrar ID ou status. "
+                    "Se erro: deve ser erro de template/dados, NÃO erro de permissão (403)."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 11: Ver memórias ──
     {
         "name": "Ver memórias do recrutador",
         "reset": True,
@@ -334,6 +385,161 @@ SCENARIOS = [
                     "Deve conter 'aprendi' ou 'perfil' ou 'configurações' ou 'padrões' ou 'decisão'."
                 ),
                 "max_wait": 30,
+            },
+        ],
+    },
+    # ── Bloco 12: Ver memórias com variação de linguagem ──
+    {
+        "name": "Ver memórias — variação",
+        "reset": False,
+        "steps": [
+            {
+                "send": "suas memórias",
+                "expect": (
+                    "Deve mostrar informações do recrutador como na pergunta anterior. "
+                    "Variações como 'suas memórias', 'o que você lembra' devem funcionar igual."
+                ),
+                "max_wait": 30,
+            },
+        ],
+    },
+    # ── Bloco 13: Guia InHire — scorecard ──
+    {
+        "name": "Guia InHire — Scorecard",
+        "reset": False,
+        "steps": [
+            {
+                "send": "como configuro o scorecard da vaga?",
+                "expect": (
+                    "Deve explicar como configurar o scorecard/kit de entrevista no InHire, "
+                    "mencionando critérios de avaliação, roteiro de perguntas, ou link de ajuda. "
+                    "NÃO deve dizer que não sabe."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 14: Guia InHire — automações ──
+    {
+        "name": "Guia InHire — Automações",
+        "reset": False,
+        "steps": [
+            {
+                "send": "como automatizo os testes da vaga?",
+                "expect": (
+                    "Deve explicar como configurar automações no InHire "
+                    "(envio automático de testes DISC, gatilhos por etapa), "
+                    "mencionando aba Automações ou link de ajuda. "
+                    "NÃO deve dizer que não sabe."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 15: Conversa livre — assunto diferente ──
+    {
+        "name": "Conversa livre — employer branding",
+        "reset": False,
+        "steps": [
+            {
+                "send": "me dá dicas de como melhorar o employer branding da empresa",
+                "expect": (
+                    "Deve responder com dicas relevantes sobre employer branding. "
+                    "Pelo menos 2-3 sugestões práticas. Não deve ser genérico/vazio."
+                ),
+                "max_wait": 60,
+            },
+        ],
+    },
+    # ── Bloco 16: Shortlist com mover — fluxo completo ──
+    {
+        "name": "Shortlist + mover — fluxo completo com aprovação",
+        "reset": True,
+        "steps": [
+            {
+                "send": "quero ver os candidatos da vaga f9d75e0b-6950-4cbb-b914-3b8f1891d41a e mover os bons pra próxima etapa",
+                "expect": (
+                    "Deve mostrar candidatos e/ou iniciar processo de shortlist/mover. "
+                    "Pode listar triagem, montar comparativo, ou pedir qual etapa."
+                ),
+                "max_wait": 120,
+            },
+        ],
+    },
+    # ── Bloco 17: Status sem especificar vaga (deve pedir ID) ──
+    {
+        "name": "Status sem vaga — pede ID",
+        "reset": True,
+        "steps": [
+            {
+                "send": "me dá o status da vaga",
+                "expect": (
+                    "Deve pedir o ID da vaga ou sugerir listar as vagas abertas. "
+                    "NÃO deve dar erro ou inventar dados."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 18: Agendar sem vaga (deve pedir ID) ──
+    {
+        "name": "Agendar sem vaga — pede ID",
+        "reset": True,
+        "steps": [
+            {
+                "send": "quero agendar uma entrevista",
+                "expect": (
+                    "Deve pedir o ID da vaga ou sugerir listar as vagas abertas. "
+                    "NÃO deve dar erro técnico."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 19: Mensagem vaga / ambígua ──
+    {
+        "name": "Mensagem ambígua",
+        "reset": True,
+        "steps": [
+            {
+                "send": "tá rolando algo?",
+                "expect": (
+                    "Deve responder de forma amigável, perguntando como pode ajudar "
+                    "ou oferecendo opções. NÃO deve dar erro."
+                ),
+            },
+        ],
+    },
+    # ── Bloco 20: Dois comandos em sequência rápida ──
+    {
+        "name": "Sequência rápida — vagas + conversa",
+        "reset": True,
+        "steps": [
+            {
+                "send": "vagas abertas",
+                "expect": "Deve listar vagas com nome, status e candidatos.",
+                "max_wait": 30,
+            },
+            {
+                "send": "o que significa SLA em recrutamento?",
+                "expect": (
+                    "Deve explicar SLA (Service Level Agreement) no contexto de recrutamento. "
+                    "Pelo menos 2 frases de conteúdo."
+                ),
+                "max_wait": 30,
+            },
+        ],
+    },
+    # ── Bloco 21: Reprovar com fluxo completo ──
+    {
+        "name": "Reprovar candidatos — fluxo com aprovação",
+        "reset": True,
+        "steps": [
+            {
+                "send": "quero reprovar os candidatos da vaga f9d75e0b-6950-4cbb-b914-3b8f1891d41a",
+                "expect": (
+                    "Deve identificar candidatos para reprovação e pedir confirmação (botões), "
+                    "OU informar quantos serão reprovados, "
+                    "OU dizer que não tem candidatos pra reprovar. "
+                    "NÃO deve dizer 'em breve' ou 'não disponível'."
+                ),
+                "max_wait": 60,
             },
         ],
     },
