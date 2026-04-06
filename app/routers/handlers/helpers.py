@@ -64,24 +64,7 @@ def _build_dynamic_context(conv, is_returning: bool = False) -> str | None:
 
 
 _NOT_AVAILABLE_MESSAGES = {
-    "agendar_entrevista": (
-        "Ainda não consigo agendar entrevistas por aqui — estamos finalizando a integração de calendário.\n\n"
-        "*Como fazer no InHire:*\n"
-        "1. Abra a vaga e clique no candidato\n"
-        "2. Clique em *Agendar entrevista*\n"
-        "3. Escolha data/hora e participantes\n"
-        "4. O convite é enviado automaticamente com link do Meet/Teams\n\n"
-        "📖 https://help.inhire.app/pt-BR/articles/8725343"
-    ),
-    "carta_oferta": (
-        "A carta oferta por aqui está em fase de validação.\n\n"
-        "*Como fazer no InHire:*\n"
-        "1. Mova o candidato para a etapa *Offer*\n"
-        "2. Clique em *Enviar carta oferta*\n"
-        "3. Escolha o template e preencha os dados (salário, data de início)\n"
-        "4. Envie para aprovação interna → depois ao candidato\n\n"
-        "📖 https://help.inhire.app/pt-BR/articles/6967313"
-    ),
+    # agendar_entrevista and carta_oferta moved to Layer 1 (session 33)
 }
 
 # Guide messages for features the agent handles partially (post-creation steps)

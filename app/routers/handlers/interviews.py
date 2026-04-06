@@ -69,15 +69,7 @@ async def _start_offer_flow(conv, app, channel_id: str, text: str):
 
     except Exception as e:
         logger.exception("Erro ao iniciar carta oferta: %s", e)
-        if "403" in str(e) or "Forbidden" in str(e):
-            await _send(
-                conv, slack, channel_id,
-                "⚠️ Carta oferta ainda não está habilitada para este tenant.\n"
-                "O time do InHire precisa fazer um deploy para liberar. "
-                "Já solicitamos — assim que estiver pronto, funciona automaticamente.",
-            )
-        else:
-            await _send(conv, slack, channel_id, f"❌ Erro: {e}")
+        await _send(conv, slack, channel_id, f"❌ Erro ao carregar dados para carta oferta: {e}")
 
 
 async def _handle_offer_input(conv, app, channel_id: str, text: str):
@@ -231,16 +223,16 @@ async def _create_and_send_offer(conv, app, channel_id: str):
         )
 
     except Exception as e:
+        logger.exception("Erro ao criar carta oferta: %s", e)
         error_msg = str(e)
-        if "403" in error_msg or "Forbidden" in error_msg:
+        if "404" in error_msg and "Template" in error_msg:
             await _send(
                 conv, slack, channel_id,
-                "⚠️ Carta oferta ainda não está habilitada para este tenant.\n"
-                "Aguardando deploy do time InHire.",
+                "❌ Template de carta oferta não encontrado.\n"
+                "Verifique se há templates configurados no InHire.",
             )
         else:
-            logger.exception("Erro ao criar carta oferta: %s", e)
-            await _send(conv, slack, channel_id, f"❌ Erro: {e}")
+            await _send(conv, slack, channel_id, f"❌ Erro ao criar carta oferta: {e}")
 
     conv.state = FlowState.IDLE
 
@@ -321,10 +313,11 @@ async def _handle_scheduling_input(conv, app, channel_id: str, text: str):
     # Use Claude to extract candidate selection and datetime from natural language
     system = """Extraia do texto do usuário:
 1. Qual candidato ele quer agendar (número ou nome)
-2. Data e hora desejada
+2. Data e hora desejada (início)
+3. Duração estimada (default: 1 hora)
 
 Retorne JSON puro:
-{"candidate_index": number ou null, "candidate_name": "string" ou null, "datetime": "YYYY-MM-DDTHH:MM:SS", "datetime_readable": "texto legível"}
+{"candidate_index": number ou null, "candidate_name": "string" ou null, "datetime": "YYYY-MM-DDTHH:MM:SS", "end_datetime": "YYYY-MM-DDTHH:MM:SS", "datetime_readable": "texto legível", "duration_minutes": 60}
 
 Se não conseguir identificar, retorne {"error": "o que falta"}"""
 
@@ -376,39 +369,47 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
     dt_readable = parsed.get("datetime_readable", parsed.get("datetime", ""))
     job_name = conv.get_context("current_job_name", "")
 
-    # Try to create appointment
+    # Build appointment payload (provider: manual — no calendar integration needed)
+    start_dt = parsed.get("datetime", "")
+    end_dt = parsed.get("end_datetime", "")
+    # Ensure ISO format with Z suffix
+    if start_dt and not start_dt.endswith("Z"):
+        start_dt = start_dt.replace("+00:00", "") + ".000Z"
+    if end_dt and not end_dt.endswith("Z"):
+        end_dt = end_dt.replace("+00:00", "") + ".000Z"
+
+    candidate_email = candidate.get("talentEmail") or candidate.get("email", "")
+    appointment_payload = {
+        "name": f"Entrevista - {candidate_name} - {job_name}",
+        "startDateTime": start_dt,
+        "endDateTime": end_dt,
+        "userEmail": conv.get_context("recruiter_email", ""),
+        "guests": [
+            {"email": candidate_email, "name": candidate_name, "type": "talent"},
+        ],
+        "hasCallLink": False,
+        "provider": "manual",
+    }
+
     try:
         appointment = await inhire.create_appointment(
             candidate.get("id"),
-            {
-                "datetime": parsed.get("datetime"),
-                "type": "interview",
-                "provider": "google",
-            },
+            appointment_payload,
         )
+        appt_id = appointment.get("id", "")
         await _send(
             conv, slack, channel_id,
             f"✅ Entrevista agendada!\n\n"
             f"*Candidato:* {candidate_name}\n"
             f"*Vaga:* {job_name}\n"
             f"*Data:* {dt_readable}\n"
-            f"*Convite:* Enviado via Google Calendar\n\n"
-            f"O candidato receberá o link da entrevista automaticamente.",
+            f"*ID:* `{appt_id}`\n\n"
+            f"O agendamento foi registrado no InHire. "
+            f"Lembre de enviar o convite com o link da reunião ao candidato.",
         )
         conv.state = FlowState.IDLE
 
     except Exception as e:
-        error_msg = str(e)
-        if "403" in error_msg or "Forbidden" in error_msg:
-            await _send(
-                conv, slack, channel_id,
-                f"⚠️ O agendamento via API ainda não está liberado para este tenant.\n\n"
-                f"*Candidato:* {candidate_name}\n"
-                f"*Data sugerida:* {dt_readable}\n\n"
-                f"Por enquanto, agende manualmente no InHire. "
-                f"Estamos trabalhando com o time do InHire para liberar essa funcionalidade.",
-            )
-        else:
-            await _send(conv, slack, channel_id, f"❌ Erro ao agendar: {e}")
-
+        logger.exception("Erro ao agendar entrevista: %s", e)
+        await _send(conv, slack, channel_id, f"❌ Erro ao agendar: {e}")
         conv.state = FlowState.MONITORING_CANDIDATES

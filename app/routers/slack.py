@@ -823,6 +823,28 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                 "Diz qual delas que eu te explico o passo a passo!",
             )
 
+    elif tool == "agendar_entrevista":
+        job_id = _resolve_job_id(conv, tool_input)
+        if job_id:
+            await _start_scheduling(conv, app, channel_id, text)
+        else:
+            await _send(
+                conv, slack, channel_id,
+                "Para agendar entrevista, preciso saber qual vaga. Me passe o ID.\n"
+                'Diga "vagas abertas" para ver a lista.',
+            )
+
+    elif tool == "carta_oferta":
+        job_id = _resolve_job_id(conv, tool_input)
+        if job_id:
+            await _start_offer_flow(conv, app, channel_id, text)
+        else:
+            await _send(
+                conv, slack, channel_id,
+                "Para criar carta oferta, preciso saber qual vaga. Me passe o ID.\n"
+                'Diga "vagas abertas" para ver a lista.',
+            )
+
     elif tool == "ver_memorias":
         await _show_memories(conv, app, channel_id)
 
