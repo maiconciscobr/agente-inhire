@@ -1831,4 +1831,41 @@ Implementar 3 melhorias de UX baseadas em pesquisa de AI assistant UX:
 
 **O que ainda depende do InHire:** agendar entrevista (service account sem calendário), enviar carta oferta (pendente validação), buscar no banco de talentos (API não pública), comunicar candidato via WhatsApp (sem API).
 
-**Em uma frase:** o recrutador decide, o Eli executa — hoje cobre da abertura da vaga até a seleção final; com os gaps resolvidos, cobriria até a contratação sem sair do Slack.
+**Em uma frase:** o recrutador decide, o Agente Eli executa — hoje cobre da abertura da vaga até a seleção final; com os gaps resolvidos, cobriria até a contratação sem sair do Slack.
+
+---
+
+## Sessão 31 — 6 de abril de 2026
+
+### Objetivo
+
+Deploy da sessão 30 no servidor + documentar gaps da API para o André (dev InHire) resolver.
+
+### O que foi feito
+
+**1. Deploy das 3 melhorias da sessão 30**
+- Arquivos copiados via SCP para `/var/www/agente-inhire/` (backup dos originais com `.bak`)
+- `systemctl restart agente-inhire` — serviço reiniciou com sucesso
+- Logs confirmam: auth InHire OK, Redis conectado, 3 jobs no scheduler
+- Health check: `{"status":"ok","service":"agente-inhire"}`
+
+**2. Testes E2E (test_agent.py)**
+- 11 cenários PASS: onboarding, abertura vaga, busca LinkedIn, análise perfil, listagem, conversa livre, status, candidatos, guia InHire, toggle, cancelar
+- Teste interrompido no cenário 12 por erro de rede transiente (httpx.ReadError na Slack API) — não relacionado às mudanças
+
+**3. API_GAPS_PARA_DEVS.md — documento para o André**
+- Reescrito com detalhes completos dos 4 gaps:
+  - Gap 1: Agendamento de entrevista (403, service account sem calendário)
+  - Gap 2: Carta oferta (403 no tenant demo)
+  - Gap 3: Busca full-text no banco de talentos (sem endpoint)
+  - Gap 4: Comunicação WhatsApp/InTerview (sem API pública)
+- Cada gap inclui: o que o Eli já faz, endpoint usado, payload, erro, perguntas específicas
+- Contexto técnico: endpoints que funcionam, endpoints que retornam 403, bugs conhecidos
+- Instruções para o André colar no Claude e pedir análise
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `API_GAPS_PARA_DEVS.md` | Reescrito com 4 gaps detalhados + contexto técnico |
+| Servidor `/var/www/agente-inhire/` | Deploy dos 6 arquivos da sessão 30 |
