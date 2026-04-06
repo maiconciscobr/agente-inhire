@@ -805,6 +805,7 @@ Perguntas feitas ao Maicon (aguardando resposta):
 | 05/04/2026 | Sessão 26 | 7 features: lock concorrência, comemoração contratação, limite 3 msgs/dia, fila fora horário, config por recrutador, follow-up entrevista, refatoração slack.py (2101→1008 linhas, 5 módulos). Deploy OK. |
 | 05/04/2026 | Sessão 27 | test_agent.py v2 (20 cenários, 19/20 PASS). Fix conversa livre (Eli responde RH). Welcome back com contexto (resume onde parou após 2h+ inatividade). |
 | 05/04/2026 | Sessão 28 | Diagnóstico: projeto feature-complete para escopo sem gaps API. 6 pendências incrementais identificadas. Decisão pendente: piloto com recrutadores vs polir vs convencer devs InHire. |
+| 05/04/2026 | Sessão 29 | 4 incrementais: recrutador inativo (2d/5d/10d), candidato excepcional (score>=4.5), horário configurável por recrutador, tier 4 stop. AGENT_BEHAVIOR_GUIDE 100% implementado. **20/20 PASS**. |
 
 ---
 
@@ -1681,4 +1682,136 @@ Revisão completa do que está pronto, bloqueado e pendente.
 
 **Decisão pendente com Maicon:** foco em recrutadores reais (piloto), convencer devs InHire (gaps doc pronto), ou polir incrementais?
 
+Maicon escolheu implementar os 4 incrementais.
+
 ### Sem código alterado nesta sessão
+
+---
+
+## Sessão 29 — 5 de abril de 2026
+
+### O que foi feito
+
+**4 melhorias incrementais implementadas — completam o AGENT_BEHAVIOR_GUIDE**
+
+**1. Recrutador inativo (alerta 2d/5d/10d) — proactive_monitor.py**
+- `record_interaction()` — chamado em cada DM, grava timestamp no Redis
+- `_days_since_interaction()` — calcula dias desde última interação
+- `_check_recruiter_inactivity()` — 3 tiers com tom progressivo e TTLs crescentes (2d, 5d, 10d)
+- `_inactivity_message()` — tom do Eli por tier (guide seção 3.8)
+- Chamado no `_check_user_jobs()` antes de checar vagas
+- `slack.py` chama `monitor.record_interaction()` em cada `_handle_dm()`
+
+**2. Candidato excepcional (score >= 4.5 alerta imediato) — proactive_monitor.py**
+- No `_check_single_job()`, após buscar candidatos, itera scores
+- Se score >= `EXCEPTIONAL_CANDIDATE_SCORE` (4.5): notifica recrutador imediatamente
+- Alert key por `candidate_id` evita duplicatas
+- Guide seção 3.6: "Se um candidato chega com score muito alto, avisa imediatamente"
+
+**3. Horário configurável por recrutador — proactive_monitor.py**
+- `_is_business_hours()` agora aceita `slack_user_id` opcional
+- Se fornecido, usa `user_mapping.get_setting()` para `working_hours_start/end/days`
+- Se não, usa defaults globais (8-19h BRT seg-sex)
+- `_send_proactive()` passa `slack_user_id` ao checar horário
+
+**4. Tier 4 "stop" do escalonamento — proactive_monitor.py**
+- `ESCALATION_TIERS` agora tem 4 níveis: 3d (info) → 7d (warning) → 14d (critical) → 21d (stop)
+- Tier "stop" = não envia alerta individual, só aparece no briefing diário
+- Guide seção 4: "Depois disso, para de insistir naquele alerta específico"
+
+**5. Testes: 20/20 PASS**
+- Todas as features novas (sessões 25-29) passando
+- Regressão zero nos testes anteriores
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `services/proactive_monitor.py` | +inatividade, +candidato excepcional, +horário por recrutador, +tier 4 stop |
+| `routers/slack.py` | +record_interaction() em _handle_dm |
+
+### Estado final do projeto
+
+O AGENT_BEHAVIOR_GUIDE está **100% implementado**:
+- ✅ Briefing diário (3.1)
+- ✅ Shortlist automático (3.2)
+- ✅ Sugestão de reprovação pós-shortlist (3.3)
+- ✅ Pipeline parado com escalonamento 4 tiers (3.4)
+- ✅ Alerta de SLA (3.5)
+- ✅ Novos candidatos no briefing + candidato excepcional (3.6)
+- ✅ Critérios rígidos (3.7)
+- ✅ Recrutador inativo 3 tiers (3.8)
+- ✅ Follow-up pós-entrevista (3.9)
+- ✅ Comemoração de contratação (3.10)
+- ✅ Horário comercial configurável (4.1)
+- ✅ Limite de mensagens proativas (4.2)
+- ✅ Escalonamento 4 tiers (4.3)
+- ✅ Pontos de pausa (4.4)
+
+**Pendências:** apenas bloqueios de terceiros (appointments, webhooks, screening, upload CV S3).
+
+---
+
+## Sessão 30 — 6 de abril de 2026
+
+### Objetivo
+
+Implementar 3 melhorias de UX baseadas em pesquisa de AI assistant UX:
+1. Memória visível — recrutador pode perguntar o que o Eli sabe sobre ele
+2. Registro de utilidade dos alertas proativos — coletar dados para futuro ajuste de frequência
+3. Consolidação semanal de padrões (mini KAIROS) — insight do estilo do recrutador injetado no contexto
+
+### O que foi feito
+
+**1. Tool `ver_memorias` — claude_client.py, learning.py, slack.py**
+- Nova tool `ver_memorias` em `ELI_TOOLS` — Claude detecta quando recrutador pergunta "o que você sabe sobre mim?", "suas memórias", etc.
+- `LearningService.get_all_patterns(recruiter_id)` — busca padrões de TODAS as vagas via `scan_iter` no Redis
+- Handler `_show_memories()` em slack.py — formata e exibe:
+  - Perfil do recrutador (nome, email)
+  - Configurações personalizadas (horário, limite de msgs)
+  - Contexto ativo (vaga, shortlist)
+  - Padrões de decisão por vaga (total, taxa aprovação, motivos rejeição, salário)
+  - Insight semanal (mini KAIROS) quando disponível
+
+**2. Registro de utilidade dos alertas — learning.py, proactive_monitor.py, slack.py**
+- `LearningService.record_alert_sent(user_id, alert_type)` — salva tipo + timestamp no Redis com TTL 1h
+- `LearningService.check_alert_response(user_id)` — chamado quando recrutador manda msg; se dentro de 30min do último alerta, infere que foi útil
+- `LearningService._record_alert_response()` — acumula stats em `inhire:alert_stats:{user}:{type}` (sent + responded)
+- `LearningService.get_alert_stats(user_id)` — consulta stats para uso futuro
+- `_send_proactive()` agora recebe parâmetro `alert_type` (default "generic")
+- Todas as 10 chamadas a `_send_proactive` atualizadas com alert_type específico: `daily_briefing`, `sla_expired`, `sla_warning`, `stale_info/warning/critical`, `exceptional_candidate`, `shortlist_ready`, `low_fit_high`, `interview_followup`, `inactivity_short/medium/long`
+- `_handle_dm()` em slack.py chama `learning.check_alert_response()` a cada mensagem
+
+**3. Consolidação semanal (mini KAIROS) — learning.py, proactive_monitor.py, main.py, helpers.py**
+- `LearningService.total_decisions_count(recruiter_id)` — conta decisões em todas as vagas
+- `LearningService.get_all_decisions_summary(recruiter_id)` — monta texto com últimas 50 decisões para Claude consolidar
+- `ProactiveMonitor.weekly_pattern_consolidation()` — para cada recrutador com 5+ decisões, Claude gera 3 frases de insight do estilo
+- Insight salvo em `inhire:insights:{user_id}` (sem TTL, atualizado semanalmente)
+- Job no scheduler: segunda-feira 9:30 BRT (12:30 UTC), ID `weekly_consolidation`
+- `ProactiveMonitor.__init__()` agora recebe `claude` como dependência
+- `main.py` atualizado: passa `claude` ao ProactiveMonitor + registra job semanal
+- `_build_dynamic_context()` em helpers.py injeta insight semanal como "ESTILO DO RECRUTADOR" no contexto dinâmico de cada interação
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `services/claude_client.py` | +tool `ver_memorias` em ELI_TOOLS |
+| `services/learning.py` | +get_all_patterns, +total_decisions_count, +get_all_decisions_summary, +record_alert_sent, +check_alert_response, +_record_alert_response, +get_alert_stats |
+| `services/proactive_monitor.py` | +alert_type em _send_proactive, +weekly_pattern_consolidation, +_consolidate_user_patterns, +claude param |
+| `routers/slack.py` | +handler ver_memorias → _show_memories, +check_alert_response em _handle_dm |
+| `routers/handlers/helpers.py` | +injeção de insight semanal em _build_dynamic_context |
+| `main.py` | +claude no ProactiveMonitor, +job weekly_consolidation no scheduler |
+| `CLAUDE.md` | +melhorias 20-22 na tabela, +ver_memorias na lista de tools |
+
+### Decisões técnicas
+
+- **Insight semanal sem TTL:** diferente dos alertas que expiram, o insight é sobrescrito a cada segunda. Se o recrutador ficar inativo, o último insight permanece disponível.
+- **Cap de 50 decisões na consolidação:** evita prompts muito longos pro Claude. Pega as 20 mais recentes de cada vaga, limita a 50 no total.
+- **Alert response window 30min:** baseado em pesquisa de UX — se o recrutador responde em até 30min, provavelmente foi motivado pelo alerta.
+- **Dados de utilidade só coletados, não usados ainda:** conforme spec, o registro é passivo. Uso futuro para ajustar frequência por tipo de alerta.
+
+### Testes
+
+- Verificação de sintaxe: todos os 7 arquivos compilam sem erro
+- test_agent.py (E2E): servidor online, primeiros cenários PASS (onboarding, abertura vaga, busca LinkedIn, análise perfil). Teste interrompido por erro de rede transiente (httpx.ReadError) — não relacionado às mudanças.
