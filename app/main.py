@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
         user_mapping=app.state.user_mapping,
         learning=app.state.learning,
         conversations=app.state.conversations,
+        claude=app.state.claude,
     )
 
     # Start cron scheduler
@@ -62,10 +63,19 @@ async def lifespan(app: FastAPI):
         minute=0,
         id="daily_briefing",
     )
+    # Weekly pattern consolidation — Monday 9:30 BRT (= 12:30 UTC)
+    scheduler.add_job(
+        app.state.monitor.weekly_pattern_consolidation,
+        "cron",
+        day_of_week="mon",
+        hour=12,
+        minute=30,
+        id="weekly_consolidation",
+    )
     scheduler.start()
     app.state.scheduler = scheduler
 
-    logger.info("Agente InHire iniciado com sucesso. Cron: monitoramento (1h) + briefing diário (9h BRT).")
+    logger.info("Agente InHire iniciado. Cron: monitoramento (1h) + briefing (9h BRT) + consolidação semanal (seg 9:30 BRT).")
     yield
 
     scheduler.shutdown()

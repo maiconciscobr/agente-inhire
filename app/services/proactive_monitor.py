@@ -11,6 +11,7 @@ from config import get_settings
 logger = logging.getLogger("agente-inhire.monitor")
 
 REDIS_ALERT_PREFIX = "inhire:alert:"
+REDIS_INSIGHTS_PREFIX = "inhire:insights:"
 REDIS_THRESHOLD_PREFIX = "inhire:threshold:"
 REDIS_BRIEFING_PREFIX = "inhire:briefing:"
 REDIS_PROACTIVE_COUNT_PREFIX = "inhire:proactive_count:"
@@ -48,12 +49,13 @@ INACTIVITY_TIERS = [
 class ProactiveMonitor:
     """Monitors jobs and sends proactive alerts to recruiters via Slack."""
 
-    def __init__(self, inhire, slack, user_mapping, learning, conversations=None):
+    def __init__(self, inhire, slack, user_mapping, learning, conversations=None, claude=None):
         self.inhire = inhire
         self.slack = slack
         self.user_mapping = user_mapping
         self.learning = learning
         self.conversations = conversations
+        self.claude = claude
         self._redis = None
         try:
             settings = get_settings()
@@ -692,3 +694,77 @@ class ProactiveMonitor:
                             self._mark_alerted(job_id, alert_id)
         except Exception:
             pass  # Talent list may fail for some jobs
+
+    # ==============================================================================
+    # WEEKLY PATTERN CONSOLIDATION (mini KAIROS)
+    # ==============================================================================
+
+    async def weekly_pattern_consolidation(self):
+        """Consolidate recruiter decision patterns into 3-line insights via Claude.
+        Called weekly (Monday 9:30 BRT). For each recruiter with 5+ decisions,
+        generates a natural-language summary stored in Redis for context injection.
+        """
+        if not self.claude:
+            logger.warning("ClaudeService não disponível para consolidação semanal")
+            return
+
+        users = self.user_mapping.get_all_users()
+        if not users:
+            return
+
+        logger.info("Consolidação semanal: processando %d recrutadores", len(users))
+
+        for user in users:
+            try:
+                await self._consolidate_user_patterns(user)
+            except Exception as e:
+                logger.warning("Erro na consolidação de %s: %s",
+                               user.get("inhire_name"), e)
+
+    async def _consolidate_user_patterns(self, user: dict):
+        """Generate pattern consolidation for a single recruiter."""
+        slack_user_id = user["slack_user_id"]
+
+        # Only consolidate if recruiter has 5+ decisions
+        total = self.learning.total_decisions_count(slack_user_id)
+        if total < 5:
+            return
+
+        decisions_text = self.learning.get_all_decisions_summary(slack_user_id)
+        if not decisions_text:
+            return
+
+        recruiter_name = user.get("inhire_name", "recrutador")
+
+        system = (
+            "Você é um analista de padrões de recrutamento. A partir do histórico "
+            "de decisões de um recrutador (aprovações e reprovações com contexto), "
+            "identifique os 3 padrões mais marcantes do estilo de decisão.\n\n"
+            "Retorne EXATAMENTE 3 frases curtas e diretas, uma por linha.\n"
+            "Foque em: perfil preferido, critérios de rejeição recorrentes, "
+            "peso relativo de fatores (salário vs experiência vs localização).\n"
+            "Não use bullet points ou numeração. Apenas 3 frases."
+        )
+
+        insight = await self.claude.chat(
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Histórico de decisões de {recruiter_name} "
+                    f"({total} decisões):\n\n{decisions_text}"
+                ),
+            }],
+            system=system,
+        )
+
+        # Store in Redis (no expiry — refreshed weekly)
+        if self._redis and insight.strip():
+            try:
+                self._redis.set(
+                    f"{REDIS_INSIGHTS_PREFIX}{slack_user_id}",
+                    insight.strip(),
+                )
+                logger.info("Insight semanal gerado para %s: %s",
+                            recruiter_name, insight.strip()[:80])
+            except Exception as e:
+                logger.warning("Erro ao salvar insight: %s", e)

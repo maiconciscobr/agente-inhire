@@ -24,6 +24,7 @@ def _build_dynamic_context(conv, is_returning: bool = False) -> str | None:
     """Build per-request dynamic context for Claude intent detection.
     When is_returning=True, includes summary and pending state so Claude
     can greet the recruiter with context from the previous session.
+    Includes weekly insight if available (mini KAIROS).
     """
     parts = []
 
@@ -47,6 +48,18 @@ def _build_dynamic_context(conv, is_returning: bool = False) -> str | None:
     shortlist = conv.get_context("shortlist_candidates")
     if shortlist:
         parts.append(f"Shortlist carregado com {len(shortlist)} candidatos")
+
+    # Weekly insight (mini KAIROS) — inject recruiter style if available
+    try:
+        import redis as redis_lib
+        from config import get_settings
+        r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+        insight = r.get(f"inhire:insights:{conv.user_id}")
+        if insight:
+            parts.append(f"ESTILO DO RECRUTADOR (padrões aprendidos):\n{insight}")
+    except Exception:
+        pass
+
     return "\n".join(parts) if parts else None
 
 

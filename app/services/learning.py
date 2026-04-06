@@ -116,6 +116,40 @@ class LearningService:
             logger.warning("Erro ao buscar todos os padrões: %s", e)
         return results
 
+    def total_decisions_count(self, recruiter_id: str) -> int:
+        """Count total decisions across all jobs for a recruiter."""
+        total = 0
+        for entry in self.get_all_patterns(recruiter_id):
+            total += entry["patterns"].get("total_decisions", 0)
+        return total
+
+    def get_all_decisions_summary(self, recruiter_id: str) -> str:
+        """Build a text summary of all decisions for Claude to consolidate."""
+        if not self._redis:
+            return ""
+
+        lines = []
+        try:
+            prefix = f"{REDIS_PREFIX}{recruiter_id}:"
+            for key in self._redis.scan_iter(f"{prefix}*"):
+                raw = self._redis.get(key)
+                if not raw:
+                    continue
+                decisions = json.loads(raw)
+                for d in decisions[-20:]:  # Last 20 per job
+                    ctx = d.get("context", {})
+                    line = f"- {d['decision']}"
+                    if ctx.get("job_name"):
+                        line += f" | vaga: {ctx['job_name']}"
+                    if ctx.get("reason"):
+                        line += f" | motivo: {ctx['reason']}"
+                    if ctx.get("salary"):
+                        line += f" | salário: R${ctx['salary']:,.0f}"
+                    lines.append(line)
+        except Exception as e:
+            logger.warning("Erro ao buscar decisões: %s", e)
+        return "\n".join(lines[-50:])  # Cap at 50 most recent
+
     def get_insights_text(self, recruiter_id: str, job_id: str) -> str:
         """Get human-readable insights for Claude to use in shortlist ranking."""
         patterns = self.get_patterns(recruiter_id, job_id)
