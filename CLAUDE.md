@@ -199,6 +199,7 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 22 | **Consolidação semanal (mini KAIROS)** — cron seg 9:30 BRT, Claude resume padrões em 3 frases | ✅ | 30 |
 | 23 | **Agendamento funcional** — provider:manual, sem calendário, registra no InHire | ✅ | 33 |
 | 24 | **Carta oferta funcional** — template + ClickSign + aprovação + envio ao candidato | ✅ | 33 |
+| 25 | **Email para candidatos** — base path /comms/, emailProvider:amazon (SES) | ✅ | 33 |
 
 ---
 

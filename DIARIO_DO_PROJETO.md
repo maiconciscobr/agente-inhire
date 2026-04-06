@@ -1968,4 +1968,20 @@ Investigar 403 nos endpoints de agendamento e carta oferta, implementar quick wi
 | `routers/handlers/interviews.py` | +payload provider:manual, +campos corretos, -fallback 403 |
 | `routers/handlers/helpers.py` | _NOT_AVAILABLE_MESSAGES esvaziado |
 | `API_GAPS_PARA_DEVS.md` | Gaps 1-2 resolvidos, status atualizado |
-| `CLAUDE.md` | +melhorias 23-24, Layer 2 → Layer 1 |
+| `CLAUDE.md` | +melhorias 23-25, Layer 2 → Layer 1 |
+| `services/inhire_client.py` | +send_email, +list_email_templates (base path /comms/) |
+
+### Descoberta adicional: Email funciona
+
+O 403 no email era base path errado — `/emails/submissions` vs `/comms/emails/submissions`.
+- `POST /comms/emails/submissions` com JWT + `emailProvider: "amazon"` → **204 OK**
+- `GET /comms/emails/templates` → **200 OK** (templates de devolutiva, abordagem, etc.)
+- Métodos `send_email()` e `list_email_templates()` adicionados ao `inhire_client.py`
+- Análise do Claude do André (ANALISE_GAPS_ELI_V2.md) ajudou a identificar os cenários de auth
+
+### Gaps restantes (requerem desenvolvimento no backend InHire)
+
+| Gap | O que precisa | Esforço estimado |
+|---|---|---|
+| Busca full-text banco de talentos | `POST /talents/search-engine/key` (replicar padrão do job-talents-svc) | ~2-4h |
+| WhatsApp envio proativo | `POST /assistant/send` no WhatsApp Assistant | ~1-2h (fase 1) |
