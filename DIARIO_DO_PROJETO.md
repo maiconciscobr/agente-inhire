@@ -1979,6 +1979,14 @@ O 403 no email era base path errado — `/emails/submissions` vs `/comms/emails/
 - Métodos `send_email()` e `list_email_templates()` adicionados ao `inhire_client.py`
 - Análise do Claude do André (ANALISE_GAPS_ELI_V2.md) ajudou a identificar os cenários de auth
 
+### Testes E2E (rodados no servidor)
+
+- **22 PASS, 1 FAIL** (23 cenários totais)
+- Agendamento de entrevista: **PASS** (antes FAIL — fix: setar current_job_id no contexto)
+- Ver memórias: **PASS**
+- Carta oferta: **FAIL** — fluxo funciona (lista candidatos, pede info), mas dados da vaga de teste têm candidatos sem nome
+- Fix aplicado: `_handle_idle` agora seta `current_job_id` antes de chamar `_start_scheduling` e `_start_offer_flow`
+
 ### Gaps restantes (requerem desenvolvimento no backend InHire)
 
 | Gap | O que precisa | Esforço estimado |
