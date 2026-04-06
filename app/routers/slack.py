@@ -826,6 +826,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "agendar_entrevista":
         job_id = _resolve_job_id(conv, tool_input)
         if job_id:
+            conv.set_context("current_job_id", job_id)
             await _start_scheduling(conv, app, channel_id, text)
         else:
             await _send(
@@ -837,6 +838,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "carta_oferta":
         job_id = _resolve_job_id(conv, tool_input)
         if job_id:
+            conv.set_context("current_job_id", job_id)
             await _start_offer_flow(conv, app, channel_id, text)
         else:
             await _send(

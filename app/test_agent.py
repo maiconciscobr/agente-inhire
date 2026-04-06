@@ -4,7 +4,8 @@ Usa Claude para avaliar semanticamente as respostas do Eli.
 Cada cenário é independente (reseta antes de rodar).
 
 Cobertura: onboarding, abertura de vaga, hunting, candidatos, mover, reprovar,
-status, listagem, conversa livre, guia InHire, toggle, cancelar, lock/dedup, shortlist.
+status, listagem, conversa livre, guia InHire, toggle, cancelar, lock/dedup, shortlist,
+agendar entrevista, carta oferta, ver memórias.
 
 Uso: python test_agent.py
 """
@@ -283,6 +284,56 @@ SCENARIOS = [
                     "Candidatos sem score é aceitável — o importante é processar a solicitação."
                 ),
                 "max_wait": 120,
+            },
+        ],
+    },
+    # ── Bloco 9: Agendamento de entrevista (sessão 33) ──
+    {
+        "name": "Agendar entrevista",
+        "reset": True,
+        "steps": [
+            {
+                "send": "quero agendar uma entrevista pra vaga f9d75e0b-6950-4cbb-b914-3b8f1891d41a",
+                "expect": (
+                    "Deve listar candidatos disponíveis para agendar entrevista "
+                    "e pedir o número do candidato e a data/hora. "
+                    "NÃO deve dizer 'em breve' ou 'não disponível'."
+                ),
+                "max_wait": 60,
+            },
+        ],
+    },
+    # ── Bloco 10: Carta oferta (sessão 33) ──
+    {
+        "name": "Carta oferta",
+        "reset": True,
+        "steps": [
+            {
+                "send": "quero enviar uma carta oferta pra vaga f9d75e0b-6950-4cbb-b914-3b8f1891d41a",
+                "expect": (
+                    "Deve listar candidatos elegíveis para carta oferta "
+                    "e pedir informações (candidato, salário, aprovador). "
+                    "Pode também listar templates disponíveis. "
+                    "NÃO deve dizer 'em breve', 'não disponível' ou 'não habilitada'."
+                ),
+                "max_wait": 60,
+            },
+        ],
+    },
+    # ── Bloco 11: Ver memórias (sessão 30) ──
+    {
+        "name": "Ver memórias do recrutador",
+        "reset": True,
+        "steps": [
+            {
+                "send": "o que você sabe sobre mim?",
+                "expect": (
+                    "Deve mostrar informações sobre o recrutador: perfil, "
+                    "configurações personalizadas, padrões de decisão, "
+                    "ou mencionar que ainda está aprendendo. "
+                    "Deve conter 'aprendi' ou 'perfil' ou 'configurações' ou 'padrões' ou 'decisão'."
+                ),
+                "max_wait": 30,
             },
         ],
     },
