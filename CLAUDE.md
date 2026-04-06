@@ -79,6 +79,7 @@ handlers = {
 - `analisar_perfil` → `_analyze_profile()`
 - `mover_candidatos` → carrega candidatos → shortlist (inclui sem score) → aprovação → `_move_approved_candidates()` (batch)
 - `reprovar_candidatos` → carrega candidatos → filtra não-selecionados → aprovação → `_reject_candidates()` (reason=enum, comment=devolutiva)
+- `ver_memorias` → `_show_memories()` (padrões, config, insights semanais)
 - `conversa_livre` → `claude.chat()` direto
 
 **Layer 2 — Retorna "em breve" (bloqueio externo):**
@@ -189,6 +190,13 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 13 | **Config por recrutador** — 8 campos em user_mapping (horário, limite, threshold) | ✅ | 26 |
 | 14 | **Follow-up entrevista** — detecta candidato 3d+ em etapa entrevista | ✅ | 26 |
 | 15 | **Refatoração slack.py** — 2101→1008 linhas, 5 módulos em handlers/ | ✅ | 26 |
+| 16 | **Recrutador inativo** — alerta 2d/5d/10d com tom progressivo | ✅ | 29 |
+| 17 | **Candidato excepcional** — score >= 4.5 → notificação imediata | ✅ | 29 |
+| 18 | **Horário configurável** — _is_business_hours usa config por recrutador | ✅ | 29 |
+| 19 | **Tier 4 stop** — após 21d, para de insistir (só briefing) | ✅ | 29 |
+| 20 | **Tool ver_memorias** — recrutador vê padrões aprendidos, config e contexto ativo | ✅ | 30 |
+| 21 | **Registro utilidade alertas** — salva tipo/timestamp de cada alerta, infere resposta em 30min | ✅ | 30 |
+| 22 | **Consolidação semanal (mini KAIROS)** — cron seg 9:30 BRT, Claude resume padrões em 3 frases | ✅ | 30 |
 
 ---
 
