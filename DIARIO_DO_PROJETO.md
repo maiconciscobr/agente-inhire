@@ -1979,13 +1979,23 @@ O 403 no email era base path errado — `/emails/submissions` vs `/comms/emails/
 - Métodos `send_email()` e `list_email_templates()` adicionados ao `inhire_client.py`
 - Análise do Claude do André (ANALISE_GAPS_ELI_V2.md) ajudou a identificar os cenários de auth
 
-### Testes E2E (rodados no servidor)
+### Testes E2E (rodados no servidor — versão final)
 
-- **22 PASS, 1 FAIL** (23 cenários totais)
-- Agendamento de entrevista: **PASS** (antes FAIL — fix: setar current_job_id no contexto)
-- Ver memórias: **PASS**
-- Carta oferta: **FAIL** — fluxo funciona (lista candidatos, pede info), mas dados da vaga de teste têm candidatos sem nome
-- Fix aplicado: `_handle_idle` agora seta `current_job_id` antes de chamar `_start_scheduling` e `_start_offer_flow`
+**33 PASS, 4 FAIL** (37 steps em 32 cenários)
+
+Bugs encontrados e corrigidos durante testes:
+1. **current_job_id não setado** — `_handle_idle` não setava job_id no contexto antes de chamar handlers → fix: setar antes de `_start_scheduling` e `_start_offer_flow`
+2. **Candidatos "Sem nome"** — API retorna `talent.name` (nested), código buscava `talentName` (top-level) → fix: helpers `_talent_name()`, `_talent_email()`, `_talent_stage()`
+3. **endDateTime vazio no agendamento** — Claude não retornava `end_datetime` → fix: calcular start + 1h como fallback
+4. **userEmail vazio** — contexto `recruiter_email` nunca setado → fix: buscar do `user_mapping`
+
+4 FAILs restantes são variações de interpretação do Claude (tool calling), não bugs de código:
+- Carta oferta fornecer dados (Claude não extraiu aprovador)
+- Shortlist + mover (Claude mostrou só stats)
+- Agendar sem vaga (Claude escolheu tool diferente)
+- Mensagem ambígua (Claude listou vagas em vez de perguntar)
+
+Cenários expandidos de 16 para 32: agendamento completo (lista + agenda), carta oferta completa (lista + dados + aprovação), ver memórias (2 variações), guias scorecard/automações, conversa livre employer branding, sem vaga pede ID, msg ambígua, sequência rápida.
 
 ### Gaps restantes (requerem desenvolvimento no backend InHire)
 
