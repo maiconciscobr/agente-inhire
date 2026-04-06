@@ -1814,4 +1814,21 @@ Implementar 3 melhorias de UX baseadas em pesquisa de AI assistant UX:
 ### Testes
 
 - Verificação de sintaxe: todos os 7 arquivos compilam sem erro
-- test_agent.py (E2E): servidor online, primeiros cenários PASS (onboarding, abertura vaga, busca LinkedIn, análise perfil). Teste interrompido por erro de rede transiente (httpx.ReadError) — não relacionado às mudanças.
+- test_agent.py (E2E): servidor online, 11 cenários PASS (onboarding, abertura vaga, busca LinkedIn, análise perfil, listagem, conversa livre, status, candidatos, guia InHire, toggle, cancelar). Teste interrompido no cenário 12 por erro de rede transiente (httpx.ReadError na Slack API) — não relacionado às mudanças.
+
+### Deploy
+
+- Arquivos copiados via SCP para `/var/www/agente-inhire/` (backup dos originais com `.bak`)
+- `systemctl restart agente-inhire` — serviço reiniciou com sucesso
+- Logs confirmam: auth InHire OK, Redis conectado, 3 jobs no scheduler (monitoramento 1h + briefing 9h BRT + consolidação semanal seg 9:30 BRT)
+- Health check: `{"status":"ok","service":"agente-inhire"}`
+
+### Resumo do projeto (estado atual)
+
+**O que o recrutador faz:** conversa no Slack como se falasse com um colega — manda briefing de vaga, pergunta sobre candidatos, aprova ou reprova com um clique, pede shortlist, cola currículo, pede busca pro LinkedIn.
+
+**O que o Eli faz:** executa o trabalho operacional — cria vaga no ATS, analisa candidatos com IA, monta rankings comparativos, move pipeline, reprova em lote com devolutiva profissional, gera strings de hunting, dá relatório de SLA, e avisa proativamente quando tem candidato bom, prazo apertando ou pipeline parado.
+
+**O que ainda depende do InHire:** agendar entrevista (service account sem calendário), enviar carta oferta (pendente validação), buscar no banco de talentos (API não pública), comunicar candidato via WhatsApp (sem API).
+
+**Em uma frase:** o recrutador decide, o Eli executa — hoje cobre da abertura da vaga até a seleção final; com os gaps resolvidos, cobriria até a contratação sem sair do Slack.
