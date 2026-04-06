@@ -7,6 +7,36 @@ from routers.handlers.helpers import _send, _send_approval
 logger = logging.getLogger("agente-inhire.slack-router")
 
 
+def _talent_name(a: dict) -> str:
+    """Extract talent name from job-talent record (handles nested talent object)."""
+    return (
+        a.get("talentName")
+        or (a.get("talent") or {}).get("name")
+        or a.get("candidateName")
+        or a.get("name")
+        or "Sem nome"
+    )
+
+
+def _talent_email(a: dict) -> str:
+    """Extract talent email from job-talent record."""
+    return (
+        a.get("talentEmail")
+        or (a.get("talent") or {}).get("email")
+        or a.get("email")
+        or ""
+    )
+
+
+def _talent_stage(a: dict) -> str:
+    """Extract stage name from job-talent record."""
+    return (
+        a.get("stageName")
+        or (a.get("stage") or {}).get("name")
+        or ""
+    )
+
+
 async def _start_offer_flow(conv, app, channel_id: str, text: str):
     """Start offer letter creation flow."""
     slack = app.state.slack
@@ -46,8 +76,8 @@ async def _start_offer_flow(conv, app, channel_id: str, text: str):
 
         msg = f"📝 *Carta Oferta — {job_name}*\n\nCandidatos elegíveis:\n\n"
         for i, a in enumerate(eligible[:10], 1):
-            name = a.get("talentName") or a.get("candidateName", "Sem nome")
-            stage = a.get("stageName", "")
+            name = _talent_name(a)
+            stage = _talent_stage(a)
             msg += f"*{i}.* {name} — Etapa: {stage}\n"
 
         if templates:
@@ -92,7 +122,7 @@ Retorne JSON puro:
 Se faltar algo, retorne {"error": "o que falta"}"""
 
     candidate_list = json.dumps([
-        {"index": i+1, "name": a.get("talentName") or a.get("candidateName", "")}
+        {"index": i+1, "name": _talent_name(a)}
         for i, a in enumerate(candidates[:10])
     ], ensure_ascii=False)
 
@@ -125,8 +155,8 @@ Se faltar algo, retorne {"error": "o que falta"}"""
         return
 
     candidate = candidates[idx - 1]
-    candidate_name = candidate.get("talentName") or candidate.get("candidateName", "Candidato")
-    candidate_email = candidate.get("talentEmail") or candidate.get("email", "")
+    candidate_name = _talent_name(candidate)
+    candidate_email = _talent_email(candidate)
     salary = parsed.get("salary", "A definir")
     approver_email = parsed.get("approver_email", "")
     approver_name = parsed.get("approver_name", approver_email.split("@")[0] if approver_email else "")
@@ -276,8 +306,8 @@ async def _start_scheduling(conv, app, channel_id: str, text: str):
         # List candidates available for scheduling
         msg = f"📅 *Agendar entrevista — {job_name}*\n\nCandidatos disponíveis:\n\n"
         for i, a in enumerate(active[:15], 1):
-            name = a.get("talentName") or a.get("candidateName", "Sem nome")
-            stage = a.get("stageName", "")
+            name = _talent_name(a)
+            stage = _talent_stage(a)
             score = a.get("screening", {}).get("score", "N/A")
             msg += f"*{i}.* {name} — Etapa: {stage} | Score: {score}\n"
 
@@ -322,7 +352,7 @@ Retorne JSON puro:
 Se não conseguir identificar, retorne {"error": "o que falta"}"""
 
     candidate_list = json.dumps([
-        {"index": i+1, "name": a.get("talentName") or a.get("candidateName", "")}
+        {"index": i+1, "name": _talent_name(a)}
         for i, a in enumerate(candidates[:15])
     ], ensure_ascii=False)
 
@@ -356,7 +386,7 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
     elif parsed.get("candidate_name"):
         name_lower = parsed["candidate_name"].lower()
         for c in candidates:
-            cname = (c.get("talentName") or c.get("candidateName", "")).lower()
+            cname = _talent_name(c).lower()
             if name_lower in cname:
                 candidate = c
                 break
@@ -365,25 +395,38 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
         await _send(conv, slack, channel_id, "Não encontrei esse candidato. Tente novamente com o número da lista.")
         return
 
-    candidate_name = candidate.get("talentName") or candidate.get("candidateName", "Candidato")
+    candidate_name = _talent_name(candidate)
     dt_readable = parsed.get("datetime_readable", parsed.get("datetime", ""))
     job_name = conv.get_context("current_job_name", "")
 
     # Build appointment payload (provider: manual — no calendar integration needed)
+    from datetime import datetime as dt_cls, timedelta
     start_dt = parsed.get("datetime", "")
     end_dt = parsed.get("end_datetime", "")
+    duration = parsed.get("duration_minutes", 60)
+
+    # Calculate end_datetime if missing (default: start + 1 hour)
+    if start_dt and not end_dt:
+        try:
+            clean = start_dt.replace("Z", "").replace(".000", "").split("+")[0]
+            start_obj = dt_cls.fromisoformat(clean)
+            end_obj = start_obj + timedelta(minutes=duration or 60)
+            end_dt = end_obj.isoformat()
+        except Exception:
+            end_dt = start_dt  # Fallback: same as start
+
     # Ensure ISO format with Z suffix
     if start_dt and not start_dt.endswith("Z"):
         start_dt = start_dt.replace("+00:00", "") + ".000Z"
     if end_dt and not end_dt.endswith("Z"):
         end_dt = end_dt.replace("+00:00", "") + ".000Z"
 
-    candidate_email = candidate.get("talentEmail") or candidate.get("email", "")
+    candidate_email = _talent_email(candidate)
     appointment_payload = {
         "name": f"Entrevista - {candidate_name} - {job_name}",
         "startDateTime": start_dt,
         "endDateTime": end_dt,
-        "userEmail": conv.get_context("recruiter_email", ""),
+        "userEmail": conv.get_context("recruiter_email", "") or (app.state.user_mapping.get_user(conv.user_id) or {}).get("inhire_email", ""),
         "guests": [
             {"email": candidate_email, "name": candidate_name, "type": "talent"},
         ],
