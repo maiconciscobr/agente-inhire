@@ -152,11 +152,13 @@ class ProactiveMonitor:
         except Exception as e:
             logger.warning("Erro ao esvaziar fila de %s: %s", slack_user_id, e)
 
-    async def _send_proactive(self, slack_user_id: str, channel_id: str, text: str):
+    async def _send_proactive(self, slack_user_id: str, channel_id: str, text: str,
+                              alert_type: str = "generic"):
         """Send a proactive message with daily limit and business hours queue.
         - If outside business hours: queue for next window
         - If daily limit reached: silently drop (logged)
         - Otherwise: send and record in conversation history
+        - Records alert_type in LearningService for utility tracking
         """
         # Outside business hours → queue (uses per-recruiter config)
         if not self._is_business_hours(slack_user_id):
@@ -176,6 +178,10 @@ class ProactiveMonitor:
             conv = self.conversations.get_or_create(slack_user_id, channel_id)
             conv.add_message("assistant", text)
             self.conversations.save(conv)
+
+        # Record alert for utility tracking
+        if self.learning:
+            self.learning.record_alert_sent(slack_user_id, alert_type)
 
     def set_threshold(self, user_id: str, job_id: str, days: int, stage: str = ""):
         """Set stale threshold for a user/job/stage."""
@@ -271,7 +277,8 @@ class ProactiveMonitor:
                 alert_key = f"inactive_{tier_level}"
                 if not self._was_alerted(slack_user_id, alert_key):
                     msg = self._inactivity_message(days, tier_level, has_open_jobs)
-                    await self._send_proactive(slack_user_id, channel_id, msg)
+                    await self._send_proactive(slack_user_id, channel_id, msg,
+                                               alert_type=f"inactivity_{tier_level}")
                     # TTL: don't repeat for a while
                     ttl = {"short": ALERT_TTL * 2, "medium": ALERT_TTL * 5, "long": ALERT_TTL * 10}
                     if self._redis:
@@ -423,7 +430,8 @@ class ProactiveMonitor:
         if urgent_jobs:
             text += f"\n\nQuer que eu monte o shortlist da vaga de *{urgent_jobs[0].get('name')}*?"
 
-        await self._send_proactive(slack_user_id, channel_id, text)
+        await self._send_proactive(slack_user_id, channel_id, text,
+                                   alert_type="daily_briefing")
         self._mark_briefing_sent(slack_user_id)
         logger.info("Briefing enviado para %s", inhire_name or slack_user_id)
 
@@ -546,6 +554,7 @@ class ProactiveMonitor:
                     f"SLA era de {sla} dias, vaga está aberta há {days_open} dias.\n"
                     f"Candidatos: {talents_count}\n"
                     f'Diga "status da vaga" para ver detalhes.',
+                    alert_type="sla_expired",
                 )
                 self._mark_alerted(job_id, "sla_expired")
 
@@ -555,6 +564,7 @@ class ProactiveMonitor:
                     f"⚠️ *SLA em {days_remaining} dias — {job_name}*\n"
                     f"Candidatos: {talents_count}\n"
                     f'Diga "candidatos" para ver a triagem.',
+                    alert_type="sla_warning",
                 )
                 self._mark_alerted(job_id, "sla_warning")
 
@@ -580,7 +590,8 @@ class ProactiveMonitor:
                 if not self._was_alerted(job_id, alert_key):
                     ttl_map = {"info": ALERT_TTL, "warning": ALERT_TTL * 3, "critical": ALERT_TTL * 7}
                     msg = self._stale_message(job_name, days_since_activity, talents_count, tier_level)
-                    await self._send_proactive(slack_user_id, channel_id, msg)
+                    await self._send_proactive(slack_user_id, channel_id, msg,
+                                               alert_type=f"stale_{tier_level}")
                     if self._redis:
                         try:
                             self._redis.setex(
@@ -613,6 +624,7 @@ class ProactiveMonitor:
                             f"🌟 *Candidato excepcional — {job_name}*\n"
                             f"*{candidate_name}* chegou com score *{score}*!\n"
                             f'Quer que eu te passe os detalhes? Diz "candidatos".',
+                            alert_type="exceptional_candidate",
                         )
                         self._mark_alerted(job_id, "exceptional", candidate_id)
 
@@ -623,6 +635,7 @@ class ProactiveMonitor:
                     f"🎯 *Shortlist pronto — {job_name}*\n"
                     f"{len(high_fit)} candidatos com alto fit!\n"
                     f'Diga "shortlist" para ver o resumo comparativo.',
+                    alert_type="shortlist_ready",
                 )
                 self._mark_alerted(job_id, "shortlist_ready")
 
@@ -634,6 +647,7 @@ class ProactiveMonitor:
                         f"⚠️ *Critérios rígidos? — {job_name}*\n"
                         f"{len(low_fit)}/{total_scored} candidatos com baixo fit ({int(len(low_fit)/total_scored*100)}%).\n"
                         f"Considere revisar os critérios da vaga ou a descrição.",
+                        alert_type="low_fit_high",
                     )
                     self._mark_alerted(job_id, "low_fit_high")
 
@@ -673,6 +687,7 @@ class ProactiveMonitor:
                                 f"💬 *{talent_name}* fez entrevista pra *{job_name}* há {days_in_stage} dias "
                                 f"(etapa: *{stage_name}*).\n"
                                 f"Já tem um retorno? Se quiser, posso mover ou precisa de mais tempo?",
+                                alert_type="interview_followup",
                             )
                             self._mark_alerted(job_id, alert_id)
         except Exception:

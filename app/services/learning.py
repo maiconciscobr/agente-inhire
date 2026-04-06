@@ -9,6 +9,9 @@ from config import get_settings
 logger = logging.getLogger("agente-inhire.learning")
 
 REDIS_PREFIX = "inhire:learning:"
+REDIS_ALERT_LOG_PREFIX = "inhire:alert_log:"
+REDIS_ALERT_STATS_PREFIX = "inhire:alert_stats:"
+ALERT_RESPONSE_WINDOW = 1800  # 30 minutes
 
 
 class LearningService:
@@ -132,3 +135,70 @@ class LearningService:
             insights.append("Taxa de aprovação baixa — critérios podem estar rígidos.")
 
         return "\n".join(insights) if insights else ""
+
+    # --- Alert utility tracking ---
+
+    def record_alert_sent(self, user_id: str, alert_type: str):
+        """Record that a proactive alert was sent. Stores timestamp and type
+        so we can later check if the recruiter responded within 30 min.
+        """
+        if not self._redis:
+            return
+        try:
+            key = f"{REDIS_ALERT_LOG_PREFIX}{user_id}:last"
+            entry = json.dumps({"type": alert_type, "ts": time.time()})
+            # Keep for 1h (enough for the 30min response window + margin)
+            self._redis.setex(key, 3600, entry)
+        except Exception as e:
+            logger.warning("Erro ao registrar alerta enviado: %s", e)
+
+    def check_alert_response(self, user_id: str):
+        """Called when recruiter sends a message. If within 30min of the last
+        proactive alert, infer the alert was useful and record it.
+        """
+        if not self._redis:
+            return
+        try:
+            key = f"{REDIS_ALERT_LOG_PREFIX}{user_id}:last"
+            raw = self._redis.get(key)
+            if not raw:
+                return
+            entry = json.loads(raw)
+            elapsed = time.time() - entry["ts"]
+            responded = elapsed <= ALERT_RESPONSE_WINDOW
+            self._record_alert_response(user_id, entry["type"], responded)
+            # Clear so we don't double-count
+            self._redis.delete(key)
+        except Exception as e:
+            logger.warning("Erro ao verificar resposta ao alerta: %s", e)
+
+    def _record_alert_response(self, user_id: str, alert_type: str, responded: bool):
+        """Increment counters for alert type: sent + responded."""
+        if not self._redis:
+            return
+        try:
+            key = f"{REDIS_ALERT_STATS_PREFIX}{user_id}:{alert_type}"
+            raw = self._redis.get(key)
+            stats = json.loads(raw) if raw else {"sent": 0, "responded": 0}
+            stats["sent"] += 1
+            if responded:
+                stats["responded"] += 1
+            self._redis.set(key, json.dumps(stats))
+        except Exception as e:
+            logger.warning("Erro ao salvar stats de alerta: %s", e)
+
+    def get_alert_stats(self, user_id: str) -> dict[str, dict]:
+        """Get alert response stats for a user. Returns {alert_type: {sent, responded}}."""
+        if not self._redis:
+            return {}
+        results = {}
+        try:
+            prefix = f"{REDIS_ALERT_STATS_PREFIX}{user_id}:"
+            for key in self._redis.scan_iter(f"{prefix}*"):
+                alert_type = key.replace(prefix, "")
+                raw = self._redis.get(key)
+                if raw:
+                    results[alert_type] = json.loads(raw)
+        except Exception as e:
+            logger.warning("Erro ao buscar stats de alertas: %s", e)
+        return results

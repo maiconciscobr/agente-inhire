@@ -236,6 +236,10 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
         if hasattr(app.state, "monitor"):
             app.state.monitor.record_interaction(user_id)
 
+        # Check if recruiter responded to a recent proactive alert
+        if hasattr(app.state, "learning"):
+            app.state.learning.check_alert_response(user_id)
+
         # --- Onboarding: check if user is registered ---
         if not user_mapping.is_registered(user_id):
             await _handle_onboarding(app, user_id, channel_id, text)
