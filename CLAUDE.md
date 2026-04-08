@@ -86,6 +86,9 @@ handlers = {
 - `agendar_entrevista` → `_start_scheduling()` (provider: manual, sem calendário)
 - `carta_oferta` → `_start_offer_flow()` (template + ClickSign)
 
+**Layer 1 — Funcional (resolvido sessão 34):**
+- `buscar_talentos` → `_search_talents()` (Typesense full-text, 86k+ talentos, scoped key 24h)
+
 ---
 
 ## Armadilhas da API InHire
@@ -114,6 +117,7 @@ handlers = {
 | Agendar entrevista | `POST /job-talents/appointments/{jobTalentId}/create` |
 | Carta oferta | `POST /offer-letters` (jobTalentId formato: `{jobId}*{talentId}`) |
 | Registrar webhook | `POST /integrations/webhooks` (**obrigatório:** `"rules": {}`) |
+| Scoped key Typesense | `GET /search-talents/security/key/talents?engine=typesense` (24h TTL, read-only) |
 
 ### Bugs conhecidos da API
 
@@ -166,8 +170,8 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | Agendamento de entrevistas | ~~Service account sem calendário~~ | ~~André~~ | ✅ Resolvido (provider: manual) |
 | Mover candidatos via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
 | Reprovar em lote via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
-| InTerview (WhatsApp) | Sem API pública | InHire | Sem previsão |
-| Busca full-text no Banco de Talentos | API não é pública | InHire | Sem previsão |
+| ~~InTerview (WhatsApp)~~ | Em desenvolvimento por outro time | InHire | Aguardando API |
+| ~~Busca full-text no Banco de Talentos~~ | ~~Endpoint já existia~~ | ~~André Gärtner~~ | ✅ Resolvido (sessão 34) |
 
 ---
 
@@ -200,6 +204,7 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 23 | **Agendamento funcional** — provider:manual, sem calendário, registra no InHire | ✅ | 33 |
 | 24 | **Carta oferta funcional** — template + ClickSign + aprovação + envio ao candidato | ✅ | 33 |
 | 25 | **Email para candidatos** — base path /comms/, emailProvider:amazon (SES) | ✅ | 33 |
+| 26 | **Busca full-text talentos** — Typesense scoped key + busca direta, 86k+ talentos | ✅ | 34 |
 
 ---
 

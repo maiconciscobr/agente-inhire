@@ -14,6 +14,7 @@ from services.conversation import ConversationManager
 from services.user_mapping import UserMapping
 from services.learning import LearningService
 from services.proactive_monitor import ProactiveMonitor
+from services.talent_search import TalentSearchService
 
 logger = logging.getLogger("agente-inhire")
 
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
     app.state.conversations = ConversationManager()
     app.state.user_mapping = UserMapping()
     app.state.learning = LearningService()
+    app.state.talent_search = TalentSearchService(app.state.inhire)
     app.state.monitor = ProactiveMonitor(
         inhire=app.state.inhire,
         slack=app.state.slack,
@@ -81,6 +83,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
     await auth.close()
     await app.state.inhire.close()
+    await app.state.talent_search.close()
     logger.info("Agente InHire encerrado.")
 
 

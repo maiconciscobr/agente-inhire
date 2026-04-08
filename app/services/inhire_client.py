@@ -279,5 +279,18 @@ class InHireClient:
         """List available email templates."""
         return await self._request("GET", "/comms/emails/templates")
 
+    # --- Talent Search (Typesense) ---
+    async def get_typesense_key(self) -> dict:
+        """Get a scoped Typesense key for full-text talent search.
+        Endpoint: GET /search-talents/security/key/talents?engine=typesense
+        Returns: {key, indexName, validForInMilliseconds, appId}
+        Key expires in 24h, isolated by tenant, read-only.
+        """
+        logger.info("Obtendo chave Typesense para busca de talentos")
+        return await self._request(
+            "GET", "/search-talents/security/key/talents",
+            params={"engine": "typesense"},
+        )
+
     async def close(self):
         await self._client.aclose()

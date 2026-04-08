@@ -2003,3 +2003,42 @@ Cenários expandidos de 16 para 32: agendamento completo (lista + agenda), carta
 |---|---|---|
 | Busca full-text banco de talentos | `POST /talents/search-engine/key` (replicar padrão do job-talents-svc) | ~2-4h |
 | WhatsApp envio proativo | `POST /assistant/send` no WhatsApp Assistant | ~1-2h (fase 1) |
+
+---
+
+## Sessão 34 — 7 de abril de 2026
+
+### O que foi feito
+
+**1. Busca full-text no banco de talentos — IMPLEMENTADA**
+
+André Gärtner (dev InHire) descobriu que já existe endpoint em produção para busca de talentos via Typesense:
+- `GET /search-talents/security/key/talents?engine=typesense` → gera scoped key read-only (24h TTL)
+- Typesense Cloud host: `i7cjbwaez4p8lktdp-1.a1.typesense.net`
+- Index: `talents-demo-prod` (86k+ talentos)
+- Campos buscáveis: `name`, `resume` (CV full-text), `location`
+- Scoped key isolada por tenant, controla visibilidade de campos sensíveis
+
+**Arquivos criados/modificados:**
+- `services/talent_search.py` — novo serviço: gerencia scoped key (cache 23h), queries Typesense via httpx
+- `services/inhire_client.py` — +`get_typesense_key()`
+- `services/claude_client.py` — +tool `buscar_talentos` no ELI_TOOLS + capability no system prompt
+- `main.py` — +`TalentSearchService` no lifespan
+- `routers/slack.py` — +import e handler para `buscar_talentos`
+- `routers/handlers/hunting.py` — +`_search_talents()` (formata resultados para Slack)
+
+**Testes confirmados no servidor:**
+- `python backend` → 25 resultados ✅
+- `designer UX` → 31 resultados ✅
+- Campos retornados: name, location, headline (extraído do resume), linkedin, email
+
+### Descoberta: Typesense host
+
+O `appId` retornado pelo endpoint é vazio (string vazia), então não dá pra construir a URL automaticamente. O host foi extraído do bundle JS do frontend (`main.363ddd18.js`). São 4 nodes no cluster Typesense, mas apenas `i7cjbwaez4p8lktdp-1.a1.typesense.net` aceita a scoped key do tenant demo.
+
+### Gaps atualizados
+
+| Gap | Status anterior | Status atual | Ação |
+|---|---|---|---|
+| **3. Busca talentos** | ⚠️ Parcial (só nome) | ✅ **FUNCIONAL** | Typesense via scoped key, 86k+ talentos |
+| **5. WhatsApp** | ❌ Sem API | ❌ Sem API | Único gap restante |

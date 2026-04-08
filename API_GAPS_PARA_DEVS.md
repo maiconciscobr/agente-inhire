@@ -136,7 +136,7 @@ Métodos `send_email()` e `list_email_templates()` implementados no `inhire_clie
 |---|---|---|---|
 | **1. Agendamento** | ❌ 403 | ✅ **FUNCIONAL + TESTADO E2E** | `provider: "manual"`, 33/37 PASS |
 | **2. Carta oferta** | ❌ 403 | ✅ **FUNCIONAL + TESTADO E2E** | Template ID correto (campo `id`), 33/37 PASS |
-| **3. Busca talentos** | ❌ Sem endpoint | ⚠️ Parcial | Nome funciona, full-text precisa de endpoint Typesense |
+| **3. Busca talentos** | ❌ Sem endpoint | ✅ **FUNCIONAL** | Endpoint existente: `GET /search-talents/security/key/talents?engine=typesense` (André Gärtner, 07/04) |
 | **4. Email** | ❌ 403 | ✅ **FUNCIONAL** | Base path `/comms/`, emailProvider `amazon` |
 | **5. WhatsApp** | ❌ Sem API | ❌ Sem API | Criar endpoint de envio no WhatsApp Assistant |
 
@@ -157,5 +157,5 @@ Métodos `send_email()` e `list_email_templates()` implementados no `inhire_clie
 
 | Gap | O que precisa | Esforço estimado |
 |---|---|---|
-| Busca full-text banco de talentos | `POST /talents/search-engine/key` (replicar padrão do job-talents-svc) | ~2-4h |
-| WhatsApp envio proativo | `POST /assistant/send` no WhatsApp Assistant | ~1-2h (fase 1) |
+| ~~Busca full-text banco de talentos~~ | ~~RESOLVIDO~~ — endpoint já existia: `GET /search-talents/security/key/talents?engine=typesense` | ✅ |
+| ~~WhatsApp envio proativo~~ | Em desenvolvimento por outro time — aguardando API | Aguardando |

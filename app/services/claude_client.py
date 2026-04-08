@@ -28,8 +28,9 @@ O QUE VOCÊ SABE FAZER:
 3. Gestão de pipeline (mover candidatos entre etapas, reprovar com devolutiva)
 4. Análise de perfis (comparar candidato com vaga)
 5. Busca LinkedIn (gerar strings booleanas pra hunting)
-6. Relatórios e status de vagas (SLA, distribuição de candidatos)
-7. Responder perguntas sobre recrutamento, entrevistas, cultura, processos seletivos — você é especialista em R&S e compartilha seu conhecimento com prazer
+6. Busca no banco de talentos (busca full-text por nome, skills, experiência, localização)
+7. Relatórios e status de vagas (SLA, distribuição de candidatos)
+8. Responder perguntas sobre recrutamento, entrevistas, cultura, processos seletivos — você é especialista em R&S e compartilha seu conhecimento com prazer
 
 CONHECIMENTO DO INHIRE:
 
@@ -264,6 +265,29 @@ ELI_TOOLS = [
             "o que o agente aprendeu sobre ele."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "buscar_talentos",
+        "description": (
+            "Busca candidatos no banco de talentos do InHire usando busca full-text. "
+            "Pesquisa por nome, skills, experiência, localização, cargo. "
+            "Use quando o recrutador quiser buscar no banco de talentos, encontrar candidatos "
+            "por perfil, pesquisar talentos, ou procurar alguém específico no sistema."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Texto de busca (ex: 'python backend São Paulo', 'designer UX senior')",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Máximo de resultados (default 10)",
+                },
+            },
+            "required": ["query"],
+        },
     },
     {
         "name": "conversa_livre",

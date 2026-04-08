@@ -94,6 +94,68 @@ Use formatação Slack. As strings devem usar AND, OR, NOT e aspas corretamente.
     await _send(conv, slack, channel_id, response)
 
 
+async def _search_talents(conv, app, channel_id: str, tool_input: dict):
+    """Search talents in the InHire talent pool using Typesense full-text search."""
+    slack = app.state.slack
+    talent_search = app.state.talent_search
+
+    query = tool_input.get("query", "")
+    max_results = tool_input.get("max_results", 10)
+
+    if not query:
+        await _send(conv, slack, channel_id, "Me diz o que buscar — cargo, skill, localização...")
+        return
+
+    await _send(conv, slack, channel_id, f"Buscando talentos: *{query}*... 🔍")
+
+    try:
+        results = await talent_search.search(query, max_results=max_results)
+        found = results["found"]
+        hits = results["hits"]
+
+        if not hits:
+            await _send(
+                conv, slack, channel_id,
+                f"Não encontrei ninguém com *{query}* no banco de talentos. "
+                "Tenta termos diferentes ou mais amplos.",
+            )
+            return
+
+        msg = f"🔍 *Busca: {query}* — {found} encontrado(s)\n\n"
+        for i, hit in enumerate(hits, 1):
+            name = hit.get("name", "Sem nome")
+            headline = hit.get("headline", "")
+            location = hit.get("location", "")
+            email = hit.get("email", "")
+            linkedin = hit.get("linkedin", "")
+
+            msg += f"*{i}. {name}*"
+            if headline:
+                msg += f" — {headline}"
+            msg += "\n"
+            if location:
+                msg += f"  📍 {location}\n"
+            if linkedin:
+                msg += f"  🔗 linkedin.com/in/{linkedin}\n"
+            if email:
+                msg += f"  ✉️ {email}\n"
+            msg += "\n"
+
+        if found > len(hits):
+            msg += f"_Mostrando {len(hits)} de {found} resultados._\n"
+
+        msg += "\nQuer que eu analise algum desses perfis? Ou vincule a uma vaga?"
+        await _send(conv, slack, channel_id, msg)
+
+    except Exception as e:
+        logger.exception("Erro na busca de talentos: %s", e)
+        await _send(
+            conv, slack, channel_id,
+            "Ops, deu ruim na busca. Pode ser que o serviço de busca esteja fora. "
+            "Tenta de novo daqui a pouco? 🤔",
+        )
+
+
 async def _job_status_report(conv, app, channel_id: str, job_id: str):
     """Generate a status report for a job including SLA tracking."""
     slack = app.state.slack
