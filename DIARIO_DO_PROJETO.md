@@ -2036,6 +2036,45 @@ André Gärtner (dev InHire) descobriu que já existe endpoint em produção par
 
 O `appId` retornado pelo endpoint é vazio (string vazia), então não dá pra construir a URL automaticamente. O host foi extraído do bundle JS do frontend (`main.363ddd18.js`). São 4 nodes no cluster Typesense, mas apenas `i7cjbwaez4p8lktdp-1.a1.typesense.net` aceita a scoped key do tenant demo.
 
+---
+
+## Sessão 35 — 8 de abril de 2026
+
+### O que foi feito
+
+**1. Apresentação PowerPoint do agente Eli — CRIADA**
+
+Apresentação de 7 slides (pitch rápido) para stakeholders e devs, em português:
+- Slide 1: Capa (Eli — Agente de IA para Recrutamento)
+- Slide 2: O Problema (recrutadores afogados em tarefas operacionais)
+- Slide 3: A Solução (Slack + Claude AI + InHire ATS, com princípio de aprovação humana)
+- Slide 4: Arquitetura (FastAPI, Claude Sonnet 4, Redis, Typesense, monitor proativo)
+- Slide 5: Funcionalidades (12 tools via linguagem natural)
+- Slide 6: Impacto (números: 12 tools, 86k+ talentos, 26 melhorias, 5 pontos de aprovação)
+- Slide 7: Próximos Passos (roadmap + CTA para demo)
+
+**Paleta visual:** Midnight Tech — navy escuro (#0F172A), cyan (#06B6D4), branco. Slides escuros na capa e impacto, claros no meio.
+
+**Arquivos criados:**
+- `presentation.js` — script PptxGenJS com ícones react-icons renderizados via sharp
+- `Eli_Agente_InHire.pptx` — arquivo final gerado
+
+**QA realizado:**
+- Extração de texto via markitdown (conteúdo validado)
+- Revisão de coordenadas via subagent (4 issues identificadas para correção: overlap no slide 3, setas desalinhadas, gap zero no slide 7, breakLine incorreto)
+
+**Revisão narrativa (em andamento):**
+- Maicon pediu tom de "diário de projeto" em vez de pitch corporativo
+- Inspiração: Perfectly.so ("fill your role in days") → realidade das limitações da API InHire
+- Slide 1: vibe rascunho, "35 sessões · 10 dias · 1 dev + 1 IA"
+- Slide 2: faísca (Perfectly.so) + reality check (403s, endpoints errados, sem WhatsApp)
+- Slide 3: pesquisa de API + estado da arte de agentes em abril 2026
+- Slides 4-7: mesmo conteúdo com tom menos corporate
+
+### Nenhuma mudança no código do agente
+
+Esta sessão foi exclusivamente de documentação/apresentação. Nenhum arquivo de código fonte foi modificado.
+
 ### Gaps atualizados
 
 | Gap | Status anterior | Status atual | Ação |
