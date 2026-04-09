@@ -49,9 +49,23 @@ PONTOS DE PAUSA (NUNCA executar sem aprovação explícita):
 
 Nesses momentos, mude o tom de "fiz" pra "posso fazer?".
 
+O QUE VOCÊ NÃO CONSEGUE FAZER (limitações reais — seja honesto):
+- Gerar links diretos para perfis de talentos ou vagas no InHire — não existe essa URL na API
+- Anexar arquivos ou currículos a talentos — a API não suporta upload de arquivos pelo agente
+- Acessar scorecards ou avaliações de entrevista — endpoint retorna 403
+- Listar usuários do workspace ou times — endpoint retorna 403
+- Enviar WhatsApp para candidatos — não existe API pública do InTerview ainda
+- Editar dados de um talento existente (telefone, email, etc.) — só leitura
+- Ver histórico de comunicação com candidato — não exposto na API
+- Acessar métricas consolidadas (tempo médio de contratação, etc.) — não existe endpoint
+
+Se o recrutador pedir algo dessa lista, explique de forma simples que ainda não é possível. Nunca finja que fez algo que não fez.
+
 REGRAS:
 - Sempre português brasileiro
-- Nunca invente dados sobre candidatos
+- NUNCA invente dados — nome, email, telefone, score, etapa, links, URLs
+- NUNCA crie links fictícios (ex: app.inhire.app/talent/..., inhire.app/perfil/...)
+- Se não sabe ou não consegue, diga claramente — nunca preencha com dados inventados
 - Se faltar informação, pergunte
 - Use nome da vaga (não ID) nas mensagens
 - Se o recrutador tiver pressa (msgs curtas, urgência), seja mais direto e menos emoji"""
@@ -290,6 +304,26 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "gerenciar_rotina",
+        "description": (
+            "Cria, lista ou cancela rotinas automáticas do recrutador. "
+            "Use quando o recrutador pedir algo recorrente "
+            "(todo dia, toda semana, me avisa quando, de tempos em tempos, "
+            "me manda X no horário Y, quero receber, rotina, agendar alerta, etc.) "
+            "ou quiser ver/cancelar suas rotinas ativas."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": "O pedido completo do recrutador sobre rotinas",
+                },
+            },
+            "required": ["request"],
+        },
+    },
+    {
         "name": "conversa_livre",
         "description": (
             "Responde perguntas gerais sobre recrutamento, processos do InHire, ou qualquer assunto "
@@ -388,6 +422,87 @@ class ClaudeService:
             messages=[{"role": "user", "content": f"Resuma esta conversa:\n\n{formatted}"}],
             system=system,
         )
+
+    async def classify_briefing_reply(self, user_text: str, has_missing_info: bool) -> str:
+        """Classify user reply during briefing collection.
+
+        Returns one of: "proceed", "more_info", "cancel"
+        - proceed: user wants to move forward (create the job, skip missing info)
+        - more_info: user is providing additional briefing details
+        - cancel: user wants to stop/cancel the flow
+        """
+        system = (
+            "Você classifica a resposta de um recrutador durante a criação de uma vaga.\n"
+            "O recrutador já passou o briefing inicial e foi perguntado se quer complementar.\n\n"
+            "Classifique a mensagem em EXATAMENTE uma palavra:\n"
+            "- proceed — quer prosseguir, criar a vaga, não tem mais info, manda gerar, "
+            "qualquer variação de 'vai', 'cria', 'pode ser', 'prossiga', 'não tenho', 'tá bom', etc.\n"
+            "- more_info — está fornecendo dados adicionais (responsabilidades, benefícios, stack, etc.)\n"
+            "- cancel — quer cancelar, desistir, parar, mudar de assunto\n\n"
+            "Responda APENAS: proceed, more_info ou cancel"
+        )
+        context = f"Tem info faltando: {'sim' if has_missing_info else 'não'}"
+        resp = await self.client.messages.create(
+            model=self.model,
+            max_tokens=20,
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": f"[{context}]\nRecrutador disse: {user_text}"}],
+        )
+        result = resp.content[0].text.strip().lower()
+        if result not in ("proceed", "more_info", "cancel"):
+            return "proceed" if any(w in result for w in ["proceed", "prosseg"]) else "more_info"
+        return result
+
+    async def parse_routine_request(self, text: str, available_jobs: list[dict]) -> dict:
+        """Parse a routine request from natural language.
+
+        Returns dict with: action, routine_type, job_id, job_name,
+        hour_brt, minute, frequency, cancel_id, description.
+        """
+        jobs_context = "\n".join(
+            f"- {j.get('name', '?')} (ID: {j.get('id', '?')})"
+            for j in available_jobs[:20]
+        )
+
+        system = (
+            "Você interpreta pedidos de rotinas automáticas de um recrutador.\n\n"
+            "Vagas ativas disponíveis:\n" + (jobs_context or "(nenhuma)") + "\n\n"
+            "Classifique o pedido e retorne JSON puro (sem markdown, sem ```):\n"
+            "{\n"
+            '  "action": "create" | "list" | "cancel",\n'
+            '  "routine_type": "novos_candidatos" | "status_vagas" | "shortlist_update" | "resumo_semanal",\n'
+            '  "job_id": "uuid" ou null,\n'
+            '  "job_name": "nome da vaga" ou null,\n'
+            '  "hour_brt": 8,\n'
+            '  "minute": 0,\n'
+            '  "frequency": "weekdays" | "daily" | "weekly_mon" | "weekly_fri" etc,\n'
+            '  "cancel_id": "1" (numero ou id, so para cancel),\n'
+            '  "description": "resumo curto do que a rotina faz"\n'
+            "}\n\n"
+            "Regras:\n"
+            "- Se o recrutador quer listar, action=list (ignore outros campos)\n"
+            "- Se quer cancelar, action=cancel + cancel_id\n"
+            "- Se quer criar: preencha todos os campos\n"
+            "- Horário padrão: 9h BRT se não especificado\n"
+            "- Frequência padrão: weekdays (seg-sex) se não especificado\n"
+            "- novos_candidatos e shortlist_update precisam de vaga. Se não mencionou, job_id=null\n"
+            "- status_vagas e resumo_semanal não precisam de vaga\n"
+            "- Resolva o nome da vaga para o job_id correto da lista acima\n"
+            "- Retorne APENAS o JSON, nada mais"
+        )
+
+        resp = await self.client.messages.create(
+            model=self.model,
+            max_tokens=300,
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": text}],
+        )
+
+        import json as json_mod
+        raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        return json_mod.loads(raw)
 
     async def extract_job_data(self, briefing: str) -> dict:
         """Extract structured job data from a free-form briefing. Returns parsed dict."""
