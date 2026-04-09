@@ -15,6 +15,7 @@ from services.user_mapping import UserMapping
 from services.learning import LearningService
 from services.proactive_monitor import ProactiveMonitor
 from services.talent_search import TalentSearchService
+from services.routines import RoutineService
 
 logger = logging.getLogger("agente-inhire")
 
@@ -77,7 +78,16 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     app.state.scheduler = scheduler
 
-    logger.info("Agente InHire iniciado. Cron: monitoramento (1h) + briefing (9h BRT) + consolidação semanal (seg 9:30 BRT).")
+    app.state.routines = RoutineService(
+        redis_client=app.state.conversations._redis,
+        scheduler=scheduler,
+        slack=app.state.slack,
+        inhire=app.state.inhire,
+        claude=app.state.claude,
+    )
+    await app.state.routines.load_all()
+
+    logger.info("Agente InHire iniciado. Cron: monitoramento (1h) + briefing (9h BRT) + consolidação semanal (seg 9:30 BRT) + rotinas customizadas.")
     yield
 
     scheduler.shutdown()
