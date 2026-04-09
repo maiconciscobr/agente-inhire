@@ -627,6 +627,41 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     slack = app.state.slack
     claude = app.state.claude
 
+    # Resume pending routine creation if user is providing the job name
+    pending = conv.get_context("pending_routine")
+    if pending:
+        jobs = conv.get_context("pending_routine_jobs", [])
+        # Use Claude to match user text to a job
+        text_lower = text.lower()
+        matched = None
+        for j in jobs:
+            if j["name"] and j["name"].lower() in text_lower:
+                matched = j
+                break
+        if not matched:
+            # Fuzzy: check if any word from user text is in a job name
+            for j in jobs:
+                if j["name"] and any(w in j["name"].lower() for w in text_lower.split() if len(w) > 2):
+                    matched = j
+                    break
+        if matched:
+            pending["job_id"] = matched["id"]
+            pending["job_name"] = matched["name"]
+            conv.set_context("pending_routine", None)
+            conv.set_context("pending_routine_jobs", None)
+            # Resume with pre-parsed data
+            await _handle_routine(conv, app, channel_id, conv.user_id, {"_parsed": pending})
+            return
+        else:
+            # Still can't match — show available jobs
+            if jobs:
+                job_list = "\n".join(f"• {j['name']}" for j in jobs[:10])
+                await _send(conv, slack, channel_id, f"Não encontrei essa vaga. Suas vagas ativas:\n\n{job_list}\n\nQual delas?")
+            else:
+                conv.set_context("pending_routine", None)
+                await _send(conv, slack, channel_id, "Você não tem vagas ativas no momento.")
+            return
+
     # Check if recruiter is returning after inactivity
     is_returning = conv.get_context("_is_returning", False)
     if is_returning:
@@ -876,21 +911,25 @@ async def _handle_routine(conv, app, channel_id: str, user_id: str, tool_input: 
     claude = app.state.claude
     routines_svc = app.state.routines
 
-    request_text = tool_input.get("request", "")
+    # Check if we have pre-parsed data (from pending routine resume)
+    parsed = tool_input.get("_parsed")
 
-    # Get active jobs for context
-    try:
-        jobs_resp = await app.state.inhire._request("POST", "/jobs/paginated/lean", json={"limit": 50})
-        active_jobs = [j for j in jobs_resp.get("results", []) if j.get("status") == "published"]
-    except Exception:
-        active_jobs = []
+    if not parsed:
+        request_text = tool_input.get("request", "")
 
-    try:
-        parsed = await claude.parse_routine_request(request_text, active_jobs)
-    except Exception as e:
-        logger.warning("Erro ao interpretar pedido de rotina: %s", e)
-        await _send(conv, slack, channel_id, "Não entendi o pedido de rotina. Pode reformular?")
-        return
+        # Get active jobs for context
+        try:
+            jobs_resp = await app.state.inhire._request("POST", "/jobs/paginated/lean", json={"limit": 50})
+            active_jobs = [j for j in jobs_resp.get("results", []) if j.get("status") == "published"]
+        except Exception:
+            active_jobs = []
+
+        try:
+            parsed = await claude.parse_routine_request(request_text, active_jobs)
+        except Exception as e:
+            logger.warning("Erro ao interpretar pedido de rotina: %s", e)
+            await _send(conv, slack, channel_id, "Não entendi o pedido de rotina. Pode reformular?")
+            return
 
     action = parsed.get("action", "list")
 
@@ -927,6 +966,11 @@ async def _handle_routine(conv, app, channel_id: str, user_id: str, tool_input: 
 
     # Validate: types that need a job
     if routine_type in ("novos_candidatos", "shortlist_update") and not job_id:
+        # Save pending routine in context so we can resume when user provides the job
+        conv.set_context("pending_routine", parsed)
+        conv.set_context("pending_routine_jobs", [
+            {"id": j.get("id"), "name": j.get("name")} for j in active_jobs
+        ])
         await _send(
             conv, slack, channel_id,
             "Pra essa rotina preciso saber qual vaga. Pode me dizer?"
