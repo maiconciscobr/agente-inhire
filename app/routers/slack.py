@@ -27,6 +27,7 @@ from routers.handlers.interviews import (
     _start_scheduling, _handle_scheduling_input,
 )
 from routers.handlers.hunting import _analyze_profile, _generate_linkedin_search, _job_status_report, _search_talents
+from services.routines import RoutineService
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -677,7 +678,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                 await _send(
                     conv, slack, channel_id,
                     f"Entendi! Só faltam alguns detalhes:\n{missing_text}\n\n"
-                    'Quer complementar ou digo "gerar" pra prosseguir mesmo assim?',
+                    "Quer complementar ou posso criar assim mesmo?",
                 )
             else:
                 await _generate_and_post_draft(conv, app, channel_id, job_data)
@@ -692,7 +693,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                 "• Faixa salarial e regime (CLT/PJ)\n"
                 "• Requisitos técnicos\n"
                 "• Urgência\n\n"
-                'Pode mandar tudo de uma vez. Quando terminar, diz "pronto".',
+                "Pode mandar tudo de uma vez ou em partes — quando tiver passado tudo, é só me avisar.",
             )
 
     elif tool == "ver_candidatos":
@@ -703,7 +704,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para qual vaga? Me passe o ID da vaga.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
 
     elif tool == "gerar_shortlist":
@@ -712,7 +713,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para qual vaga? Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
         else:
             # Load candidates if not already loaded for this job
@@ -729,7 +730,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para qual vaga? Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
 
     elif tool == "busca_linkedin":
@@ -745,7 +746,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para mover candidatos, preciso saber qual vaga. Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
         else:
             # Load candidates if needed
@@ -766,7 +767,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para reprovar candidatos, preciso saber qual vaga. Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
         else:
             # Load candidates if needed
@@ -832,7 +833,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para agendar entrevista, preciso saber qual vaga. Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
 
     elif tool == "carta_oferta":
@@ -844,7 +845,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _send(
                 conv, slack, channel_id,
                 "Para criar carta oferta, preciso saber qual vaga. Me passe o ID.\n"
-                'Diga "vagas abertas" para ver a lista.',
+                "Posso te mostrar suas vagas se quiser.",
             )
 
     elif tool == "ver_memorias":
@@ -852,6 +853,9 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
 
     elif tool == "buscar_talentos":
         await _search_talents(conv, app, channel_id, tool_input)
+
+    elif tool == "gerenciar_rotina":
+        await _handle_routine(conv, app, channel_id, conv.user_id, tool_input)
 
     elif tool == "conversa_livre":
         response = await claude.chat(conv.messages)
@@ -866,11 +870,114 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         await _send(conv, slack, channel_id, response)
 
 
+async def _handle_routine(conv, app, channel_id: str, user_id: str, tool_input: dict):
+    """Handle routine management (create, list, cancel)."""
+    slack = app.state.slack
+    claude = app.state.claude
+    routines_svc = app.state.routines
+
+    request_text = tool_input.get("request", "")
+
+    # Get active jobs for context
+    try:
+        jobs_resp = await app.state.inhire._request("POST", "/jobs/paginated/lean", json={"limit": 50})
+        active_jobs = [j for j in jobs_resp.get("results", []) if j.get("status") == "published"]
+    except Exception:
+        active_jobs = []
+
+    try:
+        parsed = await claude.parse_routine_request(request_text, active_jobs)
+    except Exception as e:
+        logger.warning("Erro ao interpretar pedido de rotina: %s", e)
+        await _send(conv, slack, channel_id, "Não entendi o pedido de rotina. Pode reformular?")
+        return
+
+    action = parsed.get("action", "list")
+
+    if action == "list":
+        user_routines = routines_svc.list(user_id)
+        if not user_routines:
+            await _send(conv, slack, channel_id, "Você não tem nenhuma rotina ativa. Quer criar uma?")
+            return
+        msg = "📋 *Suas rotinas ativas:*\n\n"
+        for i, r in enumerate(user_routines, 1):
+            job_info = f" — {r.job_name}" if r.job_name else ""
+            msg += f"*{i}.* {r.description}{job_info} ({r.human_schedule()})\n"
+        msg += "\nPra cancelar alguma, me avisa qual."
+        await _send(conv, slack, channel_id, msg)
+        return
+
+    if action == "cancel":
+        cancel_id = str(parsed.get("cancel_id", ""))
+        cancelled = routines_svc.cancel(user_id, cancel_id)
+        if cancelled:
+            await _send(conv, slack, channel_id, f"Pronto, cancelei a rotina *{cancelled.description}*.")
+        else:
+            await _send(conv, slack, channel_id, "Não encontrei essa rotina. Me diz o número dela.")
+        return
+
+    # action == "create"
+    routine_type = parsed.get("routine_type", "status_vagas")
+    job_id = parsed.get("job_id")
+    job_name = parsed.get("job_name")
+    hour_brt = parsed.get("hour_brt", 9)
+    minute = parsed.get("minute", 0)
+    frequency = parsed.get("frequency", "weekdays")
+    description = parsed.get("description", request_text[:100])
+
+    # Validate: types that need a job
+    if routine_type in ("novos_candidatos", "shortlist_update") and not job_id:
+        await _send(
+            conv, slack, channel_id,
+            "Pra essa rotina preciso saber qual vaga. Pode me dizer?"
+        )
+        return
+
+    # Convert BRT to UTC
+    hour_utc = (hour_brt + 3) % 24
+
+    # Convert frequency to cron days
+    freq_to_days = {
+        "weekdays": "mon-fri",
+        "daily": "*",
+        "weekly_mon": "mon",
+        "weekly_tue": "tue",
+        "weekly_wed": "wed",
+        "weekly_thu": "thu",
+        "weekly_fri": "fri",
+        "weekly_sat": "sat",
+        "weekly_sun": "sun",
+    }
+    days = freq_to_days.get(frequency, "mon-fri")
+
+    result = routines_svc.create(
+        user_id=user_id,
+        channel_id=channel_id,
+        routine_type=routine_type,
+        description=description,
+        hour_utc=hour_utc,
+        minute=minute,
+        days=days,
+        job_id=job_id,
+        job_name=job_name,
+    )
+
+    if isinstance(result, str):
+        await _send(conv, slack, channel_id, result)
+        return
+
+    await _send(
+        conv, slack, channel_id,
+        f"Rotina criada! Vou te mandar *{result.description}* "
+        f"todo(a) {result.human_schedule()}. Quer cancelar, é só me avisar."
+    )
+
+
 async def _handle_waiting_approval(conv, app, channel_id: str, text: str):
     await _send(
         conv, app.state.slack, channel_id,
         "Tô esperando sua decisão ali em cima — ✅ Aprovar, ✏️ Ajustar ou ❌ Rejeitar.\n"
-        'Ou diz "cancelar" pra recomeçar.',
+        "Se quiser recomeçar, é só me dizer.",
     )
 
 
