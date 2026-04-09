@@ -209,7 +209,7 @@ class RoutineService:
             results = jobs.get("results", [])
         except Exception:
             return "Não consegui acessar suas vagas no momento."
-        active = [j for j in results if j.get("status") == "published"]
+        active = [j for j in results if j.get("status") in ("open", "published")]
         if not active:
             return "Nenhuma vaga ativa no momento."
         msg = "📊 *Status das vagas ativas*\n\n"
@@ -251,7 +251,7 @@ class RoutineService:
             results = jobs.get("results", [])
         except Exception:
             return "Não consegui gerar o resumo semanal."
-        active = [j for j in results if j.get("status") == "published"]
+        active = [j for j in results if j.get("status") in ("open", "published")]
         total_talents = sum(j.get("talentsCount", 0) for j in active)
         msg = (
             f"📅 *Resumo semanal*\n\n"
