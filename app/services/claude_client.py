@@ -394,8 +394,14 @@ class ClaudeService:
     def _log_usage(self, method: str, resp, latency_ms: int):
         try:
             usage = resp.usage
+            if usage is None:
+                logger.warning("_log_usage(%s): resp.usage is None", method)
+                return
             model = resp.model or self.model
-            prices = PRICING.get(model, PRICING["claude-sonnet-4-20250514"])
+            prices = PRICING.get(model)
+            if prices is None:
+                logger.warning("_log_usage(%s): modelo '%s' sem pricing, usando Sonnet", method, model)
+                prices = PRICING["claude-sonnet-4-20250514"]
 
             input_tokens = getattr(usage, "input_tokens", 0)
             output_tokens = getattr(usage, "output_tokens", 0)
@@ -421,7 +427,7 @@ class ClaudeService:
                 "estimated_cost_usd": round(cost, 6),
             }))
         except Exception as e:
-            logger.warning("Erro ao logar usage: %s", e)
+            logger.warning("Erro ao logar usage para %s: %s", method, e, exc_info=True)
 
     async def chat(self, messages: list[dict], system: str | None = None,
                    dynamic_context: str | None = None, max_tokens: int = 4096) -> str:
@@ -454,11 +460,20 @@ class ClaudeService:
         )
         self._log_usage("detect_intent", resp, int((time.monotonic() - t0) * 1000))
 
+        if not resp.content:
+            logger.warning("detect_intent: resp.content vazio (stop_reason=%s)", resp.stop_reason)
+            return {"tool": None, "text": ""}
+
+        if resp.stop_reason == "max_tokens":
+            logger.warning("detect_intent: resposta truncada (max_tokens)")
+
         tool_block = None
         text_parts = []
         for block in resp.content:
             if block.type == "tool_use" and tool_block is None:
                 tool_block = block
+            elif block.type == "tool_use":
+                logger.debug("detect_intent: tool_use extra ignorado: %s", block.name)
             elif hasattr(block, "text") and block.text:
                 text_parts.append(block.text)
 
@@ -569,15 +584,14 @@ class ClaudeService:
         )
         self._log_usage("parse_routine_request", resp, int((time.monotonic() - t0) * 1000))
 
-        import json as json_mod
         raw = resp.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
         try:
-            return json_mod.loads(raw)
+            return json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             logger.warning("Haiku retornou JSON invalido em parse_routine_request: %s", raw[:200])
-            return {"action": "list"}
+            raise ValueError("Falha ao interpretar pedido de rotina")
 
     async def extract_job_data(self, briefing: str) -> dict:
         """Extract structured job data from a free-form briefing. Returns parsed dict."""
