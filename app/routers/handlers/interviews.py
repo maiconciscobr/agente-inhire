@@ -7,6 +7,20 @@ from routers.handlers.helpers import _send, _send_approval, _talent_phone
 logger = logging.getLogger("agente-inhire.slack-router")
 
 
+async def _send_interview_reminder(app, channel_id: str, candidate_name: str, job_name: str, datetime_str: str):
+    """Send interview reminder to recruiter via Slack."""
+    slack = app.state.slack
+    try:
+        await slack.post_message(
+            channel_id,
+            f"⏰ *Lembrete:* Entrevista com *{candidate_name}* para a vaga *{job_name}* "
+            f"começa em 2 horas ({datetime_str}).\n\n"
+            f"Tudo pronto? Se precisar remarcar, é só me avisar!",
+        )
+    except Exception as e:
+        logger.warning("Falha ao enviar lembrete: %s", e)
+
+
 def _talent_name(a: dict) -> str:
     """Extract talent name from job-talent record (handles nested talent object)."""
     return (
@@ -480,6 +494,30 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
             f"*Data:* {dt_readable}\n"
             f"*ID:* `{appt_id}`",
         )
+
+        # Schedule reminder 2 hours before interview
+        try:
+            from datetime import datetime as dt_cls, timedelta, timezone
+
+            start_str = appointment_payload.get("startDateTime", "")
+            if start_str:
+                clean = start_str.replace("Z", "").replace(".000", "").split("+")[0]
+                start_dt = dt_cls.fromisoformat(clean).replace(tzinfo=timezone.utc)
+                reminder_time = start_dt - timedelta(hours=2)
+
+                if reminder_time > dt_cls.now(timezone.utc):
+                    scheduler = app.state.scheduler
+                    scheduler.add_job(
+                        _send_interview_reminder,
+                        trigger="date",
+                        run_date=reminder_time,
+                        args=[app, channel_id, candidate_name, job_name, start_str],
+                        id=f"reminder_{appt_id}",
+                        replace_existing=True,
+                    )
+                    logger.info("Lembrete agendado para %s", reminder_time)
+        except Exception as reminder_err:
+            logger.warning("Não agendou lembrete: %s", reminder_err)
 
         # Offer WhatsApp confirmation
         phone = _talent_phone(candidate)
