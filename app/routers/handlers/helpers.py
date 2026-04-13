@@ -1,4 +1,5 @@
 import logging
+import re
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -185,3 +186,34 @@ def _suggest_next_action(conv, total_candidates: int = 0, high_fit: int = 0,
         )
 
     return ""
+
+
+def _normalize_phone(raw: str) -> str | None:
+    """Normalize phone to international digits-only format for WhatsApp API.
+
+    Examples:
+        '+55 (11) 99999-8888' -> '5511999998888'
+        '(11) 99999-8888'     -> '5511999998888'
+        '11999998888'         -> '5511999998888'
+    Returns None if result is not 10-15 digits.
+    """
+    digits = re.sub(r"\D", "", raw)
+    # Brazilian numbers without country code
+    if len(digits) in (10, 11) and not digits.startswith("55"):
+        digits = "55" + digits
+    if len(digits) < 10 or len(digits) > 15:
+        return None
+    return digits
+
+
+def _talent_phone(a: dict) -> str | None:
+    """Extract and normalize phone from a job-talent record."""
+    raw = (
+        a.get("talentPhone")
+        or (a.get("talent") or {}).get("phone")
+        or a.get("phone")
+        or ""
+    )
+    if not raw:
+        return None
+    return _normalize_phone(raw)
