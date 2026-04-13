@@ -14,9 +14,10 @@ from services.conversation import FlowState
 # Extracted handler modules (refactored session 26)
 from routers.handlers.helpers import (
     _send, _send_approval, _resolve_job_id, _build_dynamic_context,
-    _suggest_next_action, _tool_not_available,
+    _suggest_next_action, _tool_not_available, _talent_phone,
     _NOT_AVAILABLE_MESSAGES, _INHIRE_GUIDES,
 )
+from services.inhire_client import WhatsAppWindowExpired, WhatsAppInvalidPhone
 from routers.handlers.job_creation import _handle_briefing, _generate_and_post_draft
 from routers.handlers.candidates import (
     _start_screening_flow, _check_candidates, _build_shortlist,
@@ -889,6 +890,9 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "buscar_talentos":
         await _search_talents(conv, app, channel_id, tool_input)
 
+    elif tool == "enviar_whatsapp":
+        await _handle_send_whatsapp(conv, app, channel_id, tool_input)
+
     elif tool == "gerenciar_rotina":
         await _handle_routine(conv, app, channel_id, conv.user_id, tool_input)
 
@@ -1158,6 +1162,86 @@ async def _list_jobs(conv, app, channel_id: str):
         await _send(conv, slack, channel_id, "Ops, não consegui buscar as vagas agora. Tenta de novo em uns minutos?")
 
 
+# WHATSAPP HANDLER
+# ==============================================================================
+
+async def _handle_send_whatsapp(conv, app, channel_id: str, tool_input: dict):
+    """Handle free-form WhatsApp message sending."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+    claude = app.state.claude
+
+    job_id = _resolve_job_id(conv, tool_input)
+    candidate_name = tool_input.get("candidate_name", "")
+    message_intent = tool_input.get("message_intent", "")
+
+    if not job_id:
+        await _send(conv, slack, channel_id, "Pra qual vaga? Posso te mostrar suas vagas se quiser.")
+        return
+
+    # Find candidate
+    try:
+        talents = await inhire.list_job_talents(job_id)
+    except Exception:
+        await _send(conv, slack, channel_id, "Não consegui acessar os candidatos dessa vaga.")
+        return
+
+    candidate = None
+    if candidate_name:
+        name_lower = candidate_name.lower()
+        for t in talents:
+            t_name = (t.get("talent") or {}).get("name") or t.get("talentName") or ""
+            if name_lower in t_name.lower():
+                candidate = t
+                break
+
+    if not candidate:
+        # List candidates with phone
+        with_phone = []
+        for t in talents[:20]:
+            phone = _talent_phone(t)
+            t_name = (t.get("talent") or {}).get("name") or t.get("talentName") or "Sem nome"
+            if phone:
+                with_phone.append(t_name)
+        if with_phone:
+            names = "\n".join(f"• {n}" for n in with_phone)
+            await _send(conv, slack, channel_id, f"Qual candidato? Estes têm telefone:\n{names}")
+        else:
+            await _send(conv, slack, channel_id, "Nenhum candidato dessa vaga tem telefone cadastrado.")
+        return
+
+    phone = _talent_phone(candidate)
+    if not phone:
+        c_name = (candidate.get("talent") or {}).get("name") or candidate.get("talentName") or "candidato"
+        await _send(conv, slack, channel_id, f"{c_name} não tem telefone cadastrado.")
+        return
+
+    c_name = (candidate.get("talent") or {}).get("name") or candidate.get("talentName") or "Candidato"
+    job_name = conv.get_context("current_job_name", "")
+
+    # Generate message with Claude
+    msg_text = await claude.generate_whatsapp_message(
+        intent=message_intent,
+        candidate_name=c_name,
+        job_name=job_name,
+    )
+
+    # Store in context for approval callback
+    conv.set_context("whatsapp_pending", {
+        "phone": phone,
+        "message": msg_text,
+        "candidate_name": c_name,
+    })
+
+    await _send_approval(
+        conv, slack, channel_id,
+        title=f"WhatsApp para {c_name}",
+        details=f"📱 *Para:* {phone}\n\n{msg_text}",
+        callback_id="whatsapp_free_approval",
+    )
+    conv.state = FlowState.WAITING_WHATSAPP_APPROVAL
+
+
 # APPROVAL HANDLER
 # ==============================================================================
 
@@ -1275,6 +1359,114 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
             elif action_id in ("adjust", "reject"):
                 conv.state = FlowState.IDLE
                 await _send(conv, slack, channel_id, "Ok, reprovação cancelada.")
+
+        # --- WhatsApp free message approval ---
+        elif callback_id == "whatsapp_free_approval":
+            if action_id == "approve":
+                pending = conv.get_context("whatsapp_pending", {})
+                if pending:
+                    try:
+                        result = await inhire.send_whatsapp(pending["phone"], pending["message"])
+                        await _send(
+                            conv, slack, channel_id,
+                            f"✅ WhatsApp enviado pra *{pending.get('candidate_name', 'candidato')}*!",
+                        )
+                    except WhatsAppWindowExpired:
+                        await _send(
+                            conv, slack, channel_id,
+                            f"Não consegui enviar — *{pending.get('candidate_name', 'o candidato')}* "
+                            f"não interagiu com o WhatsApp do InHire nas últimas 24h.",
+                        )
+                    except WhatsAppInvalidPhone:
+                        await _send(
+                            conv, slack, channel_id,
+                            f"O telefone de *{pending.get('candidate_name', 'candidato')}* não parece válido pra WhatsApp.",
+                        )
+                    except Exception as e:
+                        logger.exception("Erro WhatsApp: %s", e)
+                        await _send(conv, slack, channel_id, "Erro ao enviar WhatsApp. Tenta de novo em alguns minutos?")
+                conv.set_context("whatsapp_pending", None)
+                conv.state = FlowState.IDLE
+            elif action_id in ("adjust", "reject"):
+                conv.set_context("whatsapp_pending", None)
+                conv.state = FlowState.IDLE
+                await _send(conv, slack, channel_id, "Ok, não enviei nada.")
+
+        # --- WhatsApp rejection devolutiva approval ---
+        elif callback_id == "whatsapp_rejection_approval":
+            if action_id == "approve":
+                pending_list = conv.get_context("whatsapp_rejection_pending", [])
+                sent = 0
+                failed = 0
+                for item in pending_list:
+                    try:
+                        await inhire.send_whatsapp(item["phone"], item["message"])
+                        sent += 1
+                    except (WhatsAppWindowExpired, WhatsAppInvalidPhone):
+                        failed += 1
+                    except Exception:
+                        failed += 1
+                msg = f"✅ Devolutiva enviada por WhatsApp pra {sent} candidato(s)."
+                if failed:
+                    msg += f"\n⚠️ {failed} não receberam (sem WhatsApp ativo ou telefone inválido)."
+                await _send(conv, slack, channel_id, msg)
+                conv.set_context("whatsapp_rejection_pending", None)
+                conv.state = FlowState.IDLE
+            elif action_id in ("adjust", "reject"):
+                conv.set_context("whatsapp_rejection_pending", None)
+                conv.state = FlowState.IDLE
+                await _send(conv, slack, channel_id, "Ok, não enviei nenhuma devolutiva por WhatsApp.")
+
+        # --- WhatsApp move notification approval ---
+        elif callback_id == "whatsapp_move_approval":
+            if action_id == "approve":
+                pending_list = conv.get_context("whatsapp_move_pending", [])
+                sent = 0
+                failed = 0
+                for item in pending_list:
+                    try:
+                        await inhire.send_whatsapp(item["phone"], item["message"])
+                        sent += 1
+                    except (WhatsAppWindowExpired, WhatsAppInvalidPhone):
+                        failed += 1
+                    except Exception:
+                        failed += 1
+                msg = f"✅ {sent} candidato(s) avisado(s) por WhatsApp!"
+                if failed:
+                    msg += f"\n⚠️ {failed} não receberam (sem WhatsApp ativo ou telefone inválido)."
+                await _send(conv, slack, channel_id, msg)
+                conv.set_context("whatsapp_move_pending", None)
+                conv.state = FlowState.IDLE
+            elif action_id in ("adjust", "reject"):
+                conv.set_context("whatsapp_move_pending", None)
+                conv.state = FlowState.IDLE
+                await _send(conv, slack, channel_id, "Ok, não avisei ninguém.")
+
+        # --- WhatsApp interview confirmation approval ---
+        elif callback_id == "whatsapp_interview_approval":
+            if action_id == "approve":
+                pending = conv.get_context("whatsapp_interview_pending", {})
+                if pending:
+                    try:
+                        await inhire.send_whatsapp(pending["phone"], pending["message"])
+                        await _send(
+                            conv, slack, channel_id,
+                            f"✅ Confirmação de entrevista enviada por WhatsApp pra *{pending.get('candidate_name', 'candidato')}*!",
+                        )
+                    except WhatsAppWindowExpired:
+                        await _send(
+                            conv, slack, channel_id,
+                            f"Não consegui enviar — o candidato não interagiu com o WhatsApp do InHire nas últimas 24h.",
+                        )
+                    except (WhatsAppInvalidPhone, Exception) as e:
+                        logger.exception("Erro WhatsApp entrevista: %s", e)
+                        await _send(conv, slack, channel_id, "Erro ao enviar WhatsApp.")
+                conv.set_context("whatsapp_interview_pending", None)
+                conv.state = FlowState.IDLE
+            elif action_id in ("adjust", "reject"):
+                conv.set_context("whatsapp_interview_pending", None)
+                conv.state = FlowState.IDLE
+                await _send(conv, slack, channel_id, "Ok, não enviei a confirmação.")
 
         # --- Offer letter approval ---
         elif callback_id == "offer_approval":
