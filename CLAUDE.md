@@ -89,6 +89,9 @@ handlers = {
 **Layer 1 — Funcional (resolvido sessão 34):**
 - `buscar_talentos` → `_search_talents()` (Typesense full-text, 86k+ talentos, scoped key 24h)
 
+**Layer 1 — Funcional (resolvido sessão 36):**
+- `gerenciar_rotina` → `_handle_routine()` (criar, listar, cancelar rotinas recorrentes via linguagem natural)
+
 ---
 
 ## Armadilhas da API InHire
@@ -205,6 +208,8 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 24 | **Carta oferta funcional** — template + ClickSign + aprovação + envio ao candidato | ✅ | 33 |
 | 25 | **Email para candidatos** — base path /comms/, emailProvider:amazon (SES) | ✅ | 33 |
 | 26 | **Busca full-text talentos** — Typesense scoped key + busca direta, 86k+ talentos | ✅ | 34 |
+| 27 | **Rotinas dinâmicas** — RoutineService (CRUD Redis + APScheduler), 4 tipos, linguagem natural | ✅ | 36 |
+| 28 | **UX conversacional** — remover keywords expostas, briefing por intent via Claude | ✅ | 37 |
 
 ---
 

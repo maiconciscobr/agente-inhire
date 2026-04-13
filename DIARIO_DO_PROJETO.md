@@ -2081,3 +2081,128 @@ Esta sessão foi exclusivamente de documentação/apresentação. Nenhum arquivo
 |---|---|---|---|
 | **3. Busca talentos** | ⚠️ Parcial (só nome) | ✅ **FUNCIONAL** | Typesense via scoped key, 86k+ talentos |
 | **5. WhatsApp** | ❌ Sem API | ❌ Sem API | Único gap restante |
+
+---
+
+## Sessão 36 — 9 de abril de 2026
+
+### Objetivo
+
+Implementar rotinas dinâmicas — recrutador cria alertas recorrentes via linguagem natural no Slack (ex: "todo dia às 8h me manda os candidatos novos da vaga de DevOps").
+
+### O que foi feito
+
+**1. Spec e plano de implementação**
+- `docs/superpowers/specs/2026-04-09-rotinas-dinamicas.md` — spec completa
+- `docs/superpowers/plans/2026-04-09-rotinas-dinamicas.md` — plano em 5 tasks
+
+**2. RoutineService — `services/routines.py` (novo)**
+- Dataclass `Routine` com 12 campos (id, user_id, channel_id, routine_type, description, job_id, job_name, hour UTC, minute, days, created_at, last_run)
+- `RoutineService` — CRUD completo em Redis + registro dinâmico no APScheduler
+- 4 tipos de rotina: `novos_candidatos`, `status_vagas`, `shortlist_update`, `resumo_semanal`
+- Cada tipo tem action handler próprio que busca dados do InHire e formata para Slack
+- Persistência: Redis hash por user + index set para startup
+- Limite: 5 rotinas por recrutador
+- `load_all()` — carrega todas as rotinas do Redis e registra no scheduler no startup
+
+**3. Tool `gerenciar_rotina` + `parse_routine_request()` — `claude_client.py`**
+- Nova tool no `ELI_TOOLS` para Claude rotear pedidos de rotina
+- `parse_routine_request()` — Claude interpreta linguagem natural e retorna JSON estruturado (action, routine_type, job_id, hour_brt, frequency, etc.)
+- Resolve nome de vaga para job_id a partir da lista de vagas ativas
+
+**4. Handler `_handle_routine` — `slack.py`**
+- Dispatch no `_handle_idle` quando Claude escolhe tool `gerenciar_rotina`
+- Suporta 3 ações: create (com validação de vaga obrigatória), list (formatação bonita), cancel (por índice ou ID)
+- Busca vagas ativas para contexto do parse
+
+**5. Integração no startup — `main.py`**
+- `RoutineService` inicializado no lifespan com redis, scheduler, slack, inhire, claude
+- `load_all()` chamado no startup para restaurar rotinas de sessões anteriores
+
+**6. Fixes durante implementação**
+- `fix: rotina pendente` — quando recrutador pede rotina de candidatos sem mencionar vaga, Eli pede a vaga em vez de falhar silenciosamente
+- `fix: filtrar vagas por status 'open'` — tenant demo usa status `open`, não `published`
+
+### Arquivos criados/modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `services/routines.py` | **Novo** — Routine dataclass + RoutineService (CRUD Redis + APScheduler) |
+| `services/claude_client.py` | +tool `gerenciar_rotina`, +`parse_routine_request()`, +`classify_briefing_reply()` |
+| `routers/slack.py` | +handler `_handle_routine`, +dispatch no `_handle_idle` |
+| `main.py` | +inicialização do RoutineService no lifespan |
+| `.gitignore` | +SQLite, node_modules, settings local |
+
+### Decisões técnicas
+
+- **APScheduler em runtime:** rotinas são registradas como CronTrigger jobs no scheduler existente. Ao cancelar, o job é removido. No restart, `load_all()` reconstrói tudo do Redis.
+- **UTC no Redis, BRT no display:** hora salva em UTC para consistência com o scheduler, convertida para BRT no `human_schedule()` e nos prompts.
+- **Limite de 5 rotinas:** evita spam e abuso. Recrutador pode cancelar e recriar.
+- **Silêncio quando sem novidade:** `_action_novos_candidatos` retorna `None` se não tem candidatos novos desde o último run — não envia mensagem vazia.
+
+### Deploy
+
+Não deployado nesta sessão (feito localmente).
+
+---
+
+## Sessão 37 — 13 de abril de 2026
+
+### Objetivo
+
+Resolver pendências acumuladas: UX conversacional, inconsistência de filtros, diário desatualizado.
+
+### O que foi feito
+
+**1. UX conversacional — remover keywords expostas**
+
+Todas as mensagens do Eli que diziam "Diz X" ou "Diga X" foram reescritas para linguagem natural:
+
+| Antes | Depois | Arquivo |
+|---|---|---|
+| `'Diga "vagas abertas" para ver a lista.'` | `"Posso te mostrar suas vagas se quiser."` | `handlers/candidates.py` |
+| `'Diz "busca linkedin".'` | `"Quer que eu gere uma string de busca pro LinkedIn?"` | `handlers/helpers.py` |
+| `'Diz "shortlist".'` | `"Que tal montar o shortlist comparativo?"` | `handlers/helpers.py` |
+| `'Diz "candidatos".'` | `"Quer ver a triagem detalhada?"` | `handlers/helpers.py` |
+| `'Diz "carta oferta".'` | `"Quer enviar uma carta oferta?"` | `handlers/helpers.py` |
+| `'Diga "status da vaga".'` | `"Quer ver o status detalhado?"` | `proactive_monitor.py` |
+| `'Diga "candidatos".'` | `"Quer ver a triagem dos candidatos?"` | `proactive_monitor.py` |
+| `'Diz "candidatos".'` | `"Quer que eu te passe os detalhes?"` | `proactive_monitor.py` |
+| `'Diga "shortlist".'` | `"Quer ver o resumo comparativo?"` | `proactive_monitor.py` |
+
+**2. Briefing por intent — `job_creation.py` refatorado**
+
+O fluxo de coleta de briefing (`_handle_briefing`) migrou de keyword matching para classificação por intent via Claude:
+
+- **Antes:** lista de keywords (`"pronto"`, `"gerar"`, `"finalizar"`) + lógica condicional complexa
+- **Depois:** `claude.classify_briefing_reply()` retorna `"proceed"`, `"more_info"` ou `"cancel"`
+- Código reduziu de ~40 linhas de condicionais para 3 branches claros
+- Recrutador não precisa mais saber palavras-chave específicas
+
+**3. Padronização filtro de vagas `"open"`**
+
+O commit `5681526` corrigiu o filtro para `"open"` no monitor, mas 3 pontos ainda aceitavam `"published"` como fallback:
+- `slack.py:923` — handler de rotinas no idle
+- `routines.py:212` — `_action_status_vagas`
+- `routines.py:254` — `_action_resumo_semanal`
+
+Todos padronizados para `== "open"`.
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `routers/handlers/candidates.py` | UX: linguagem natural |
+| `routers/handlers/helpers.py` | UX: 5 dicas reescritas |
+| `routers/handlers/job_creation.py` | Refatoração: briefing por intent via Claude |
+| `services/proactive_monitor.py` | UX: 4 alertas reescritos |
+| `routers/slack.py` | Fix: filtro `"open"` no handler de rotinas |
+| `services/routines.py` | Fix: filtro `"open"` em status_vagas e resumo_semanal |
+| `DIARIO_DO_PROJETO.md` | Registradas sessões 36 e 37 |
+
+### Estado do projeto
+
+- **37 sessões**, 27 melhorias arquiteturais
+- **13 tools** funcionais (12 anteriores + `gerenciar_rotina`)
+- **1 gap restante:** WhatsApp (sem API do InHire)
+- **Pendente:** deploy das sessões 36-37 no servidor
