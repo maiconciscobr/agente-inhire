@@ -735,7 +735,8 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "ver_candidatos":
         job_id = _resolve_job_id(conv, tool_input)
         if job_id:
-            await _check_candidates(conv, app, channel_id, job_id)
+            stage_filter = tool_input.get("stage_filter", "")
+            await _check_candidates(conv, app, channel_id, job_id, stage_filter=stage_filter)
         else:
             await _send(
                 conv, slack, channel_id,

@@ -32,7 +32,7 @@ async def _start_screening_flow(conv, app, channel_id: str, text: str):
     await _check_candidates(conv, app, channel_id, job_id)
 
 
-async def _check_candidates(conv, app, channel_id: str, job_id: str):
+async def _check_candidates(conv, app, channel_id: str, job_id: str, stage_filter: str = ""):
     """Check candidates for a specific job and report screening distribution."""
     slack = app.state.slack
     inhire = app.state.inhire
@@ -90,6 +90,27 @@ async def _check_candidates(conv, app, channel_id: str, job_id: str):
                 low_fit.append(candidate)
             else:
                 no_score.append(candidate)
+
+        # Filter by stage if requested
+        if stage_filter:
+            stage_lower = stage_filter.lower()
+            all_candidates = high_fit + medium_fit + low_fit + no_score
+            filtered = [c for c in all_candidates if stage_lower in c["stage"].lower()]
+
+            if not filtered:
+                await _send(
+                    conv, slack, channel_id,
+                    f"📋 *{job_name}*\nNenhum candidato na etapa *{stage_filter}*."
+                    + _suggest_next_action(conv, total_candidates=len(applications)),
+                )
+                return
+
+            # Rebuild categories with only filtered candidates
+            filtered_ids = {c["id"] for c in filtered}
+            high_fit = [c for c in high_fit if c["id"] in filtered_ids]
+            medium_fit = [c for c in medium_fit if c["id"] in filtered_ids]
+            low_fit = [c for c in low_fit if c["id"] in filtered_ids]
+            no_score = [c for c in no_score if c["id"] in filtered_ids]
 
         # Build report
         total = len(applications)

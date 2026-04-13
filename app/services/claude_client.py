@@ -118,6 +118,10 @@ ELI_TOOLS = [
                     "type": "string",
                     "description": "ID da vaga (UUID). Omita para usar a vaga ativa na conversa.",
                 },
+                "stage_filter": {
+                    "type": "string",
+                    "description": "Filtrar por nome da etapa (ex: 'Entrevista', 'Triagem'). Vazio = todos.",
+                },
             },
             "required": [],
         },
