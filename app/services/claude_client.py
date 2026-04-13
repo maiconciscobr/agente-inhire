@@ -1,11 +1,18 @@
 import json
 import logging
+import time
 
 import anthropic
 
 from config import Settings
 
 logger = logging.getLogger("agente-inhire.claude")
+usage_logger = logging.getLogger("agente-inhire.claude.usage")
+
+PRICING = {
+    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30},
+    "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00, "cache_write": 1.25, "cache_read": 0.10},
+}
 
 # Parte estática do system prompt — persona, regras, conhecimento InHire.
 # Cacheada pela Anthropic API entre requests (cache_control: ephemeral, TTL 5 min).
@@ -368,14 +375,48 @@ class ClaudeService:
             blocks.append({"type": "text", "text": dynamic})
         return blocks
 
+    def _log_usage(self, method: str, resp, latency_ms: int):
+        try:
+            usage = resp.usage
+            model = resp.model or self.model
+            prices = PRICING.get(model, PRICING["claude-sonnet-4-20250514"])
+
+            input_tokens = getattr(usage, "input_tokens", 0)
+            output_tokens = getattr(usage, "output_tokens", 0)
+            cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
+            cache_read = getattr(usage, "cache_read_input_tokens", 0)
+
+            cost = (
+                (input_tokens - cache_creation - cache_read) * prices["input"] / 1_000_000
+                + output_tokens * prices["output"] / 1_000_000
+                + cache_creation * prices["cache_write"] / 1_000_000
+                + cache_read * prices["cache_read"] / 1_000_000
+            )
+
+            usage_logger.info(json.dumps({
+                "method": method,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_creation_input_tokens": cache_creation,
+                "cache_read_input_tokens": cache_read,
+                "stop_reason": resp.stop_reason,
+                "latency_ms": latency_ms,
+                "estimated_cost_usd": round(cost, 6),
+            }))
+        except Exception as e:
+            logger.warning("Erro ao logar usage: %s", e)
+
     async def chat(self, messages: list[dict], system: str | None = None,
                    dynamic_context: str | None = None) -> str:
+        t0 = time.monotonic()
         resp = await self.client.messages.create(
             model=self.model,
             max_tokens=4096,
             system=self._build_system(system or SYSTEM_PROMPT_STATIC, dynamic_context),
             messages=messages,
         )
+        self._log_usage("chat", resp, int((time.monotonic() - t0) * 1000))
         return resp.content[0].text
 
     async def detect_intent(self, messages: list[dict],
@@ -383,25 +424,34 @@ class ClaudeService:
         """Use Claude tool calling to detect user intent.
 
         Returns:
-            {"tool": "tool_name", "input": {...}} if a tool was called
-            {"tool": None, "text": "..."} if no tool was called
+            {"tool": "tool_name", "input": {...}, "text": "..."} if a tool was called
+            {"tool": None, "text": "..."} if no tool was called (direct response)
         """
+        t0 = time.monotonic()
         resp = await self.client.messages.create(
             model=self.model,
-            max_tokens=1024,
+            max_tokens=2048,
             system=self._build_system(SYSTEM_PROMPT_STATIC, dynamic_context),
             tools=ELI_TOOLS,
-            tool_choice={"type": "any"},
+            tool_choice={"type": "auto"},
             messages=messages,
         )
+        self._log_usage("detect_intent", resp, int((time.monotonic() - t0) * 1000))
 
+        tool_block = None
+        text_parts = []
         for block in resp.content:
-            if block.type == "tool_use":
-                return {"tool": block.name, "input": block.input}
+            if block.type == "tool_use" and tool_block is None:
+                tool_block = block
+            elif hasattr(block, "text") and block.text:
+                text_parts.append(block.text)
 
-        # Fallback (shouldn't happen with tool_choice=any)
-        text = next((b.text for b in resp.content if hasattr(b, "text")), "")
-        return {"tool": None, "text": text}
+        combined_text = "\n".join(text_parts) if text_parts else ""
+
+        if tool_block:
+            return {"tool": tool_block.name, "input": tool_block.input, "text": combined_text}
+
+        return {"tool": None, "text": combined_text or ""}
 
     async def summarize_conversation(self, messages: list[dict]) -> str:
         """Compress conversation history into a 5-line summary for context efficiency."""
@@ -443,12 +493,14 @@ class ClaudeService:
             "Responda APENAS: proceed, more_info ou cancel"
         )
         context = f"Tem info faltando: {'sim' if has_missing_info else 'não'}"
+        t0 = time.monotonic()
         resp = await self.client.messages.create(
             model=self.fast_model,
             max_tokens=20,
             system=[{"type": "text", "text": system}],
             messages=[{"role": "user", "content": f"[{context}]\nRecrutador disse: {user_text}"}],
         )
+        self._log_usage("classify_briefing_reply", resp, int((time.monotonic() - t0) * 1000))
         result = resp.content[0].text.strip().lower()
         if result not in ("proceed", "more_info", "cancel"):
             return "proceed" if any(w in result for w in ["proceed", "prosseg"]) else "more_info"
@@ -492,12 +544,14 @@ class ClaudeService:
             "- Retorne APENAS o JSON, nada mais"
         )
 
+        t0 = time.monotonic()
         resp = await self.client.messages.create(
             model=self.fast_model,
             max_tokens=300,
             system=[{"type": "text", "text": system}],
             messages=[{"role": "user", "content": text}],
         )
+        self._log_usage("parse_routine_request", resp, int((time.monotonic() - t0) * 1000))
 
         import json as json_mod
         raw = resp.content[0].text.strip()

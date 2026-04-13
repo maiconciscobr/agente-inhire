@@ -893,8 +893,13 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         await _handle_routine(conv, app, channel_id, conv.user_id, tool_input)
 
     elif tool == "conversa_livre":
-        response = await claude.chat(conv.messages)
-        await _send(conv, slack, channel_id, response)
+        # Use text from detect_intent if available, avoid double-call
+        direct_text = result.get("text", "")
+        if direct_text.strip():
+            await _send(conv, slack, channel_id, direct_text)
+        else:
+            response = await claude.chat(conv.messages)
+            await _send(conv, slack, channel_id, response)
 
     # --- Layer 2: Not yet available ---
     elif tool in _NOT_AVAILABLE_MESSAGES:

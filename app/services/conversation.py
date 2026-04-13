@@ -32,6 +32,8 @@ class FlowState(str, Enum):
     # Offer letter flow
     CREATING_OFFER = "creating_offer"
     WAITING_OFFER_APPROVAL = "waiting_offer_approval"
+    # WhatsApp communication flow
+    WAITING_WHATSAPP_APPROVAL = "waiting_whatsapp_approval"
 
 
 SUMMARY_THRESHOLD = 20  # Generate summary every N messages
