@@ -214,6 +214,24 @@ class InHireClient:
             json={"source": source, "talentId": talent_id},
         )
 
+    async def get_talent_by_email(self, email: str) -> dict | None:
+        """Find a talent by exact email. Returns None if not found."""
+        try:
+            return await self._request("GET", f"/talents/email/{email}")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    async def get_talent_by_linkedin(self, username: str) -> dict | None:
+        """Find a talent by LinkedIn username. Returns None if not found."""
+        try:
+            return await self._request("GET", f"/talents/linkedin/{username}")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
     # --- Appointments (base path: /job-talents/appointments) ---
     async def create_appointment(self, job_talent_id: str, payload: dict) -> dict:
         """Create an appointment. Required: name, startDateTime, endDateTime, guests, hasCallLink, userEmail."""
