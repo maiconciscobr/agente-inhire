@@ -696,6 +696,126 @@ class ProactiveMonitor:
             pass  # Talent list may fail for some jobs
 
     # ==============================================================================
+    # WEEKLY CONSOLIDATED REPORT
+    # ==============================================================================
+
+    async def _weekly_report(self):
+        """Send weekly consolidated report of all active jobs to all recruiters.
+        Called by cron every Monday at 9:30 BRT.
+        """
+        users = self.user_mapping.get_all_users()
+        if not users:
+            return
+
+        logger.info("Relatório semanal: enviando para %d recrutadores", len(users))
+
+        async def _safe_report(user):
+            try:
+                await self._send_user_weekly_report(user)
+            except Exception as e:
+                logger.exception("Erro no relatório semanal de %s: %s", user.get("inhire_name"), e)
+
+        await asyncio.gather(*[_safe_report(user) for user in users])
+
+    async def _send_user_weekly_report(self, user: dict):
+        """Build and send weekly consolidated report for a single recruiter."""
+        slack_user_id = user["slack_user_id"]
+        inhire_name = user.get("inhire_name", "")
+
+        # Open DM
+        try:
+            dm_resp = await self.slack.client.conversations_open(users=slack_user_id)
+            channel_id = dm_resp["channel"]["id"]
+        except Exception as e:
+            logger.warning("Não consegui abrir DM com %s: %s", slack_user_id, e)
+            return
+
+        # Get all open jobs for this user
+        try:
+            jobs_data = await self.inhire._request("POST", "/jobs/paginated/lean", json={})
+            all_jobs = jobs_data.get("results", []) if isinstance(jobs_data, dict) else jobs_data
+            user_jobs = [j for j in all_jobs if j.get("userName") == inhire_name and j.get("status") == "open"]
+        except Exception as e:
+            logger.warning("Erro ao buscar jobs para relatório semanal de %s: %s", inhire_name, e)
+            return
+
+        if not user_jobs:
+            return  # No active jobs, skip
+
+        now = datetime.now(timezone.utc)
+        job_lines = []
+        total_candidates = 0
+        at_risk_count = 0
+
+        for job in user_jobs:
+            job_id = job.get("id", "")
+            job_name = job.get("name", "Vaga")
+            created_at = job.get("createdAt", "")
+
+            # Calculate days open
+            days_open = 0
+            if created_at:
+                try:
+                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    days_open = (now - created).days
+                except Exception:
+                    pass
+
+            # Status emoji based on days open
+            if days_open < 15:
+                emoji = "🟢"
+            elif days_open < 30:
+                emoji = "🟡"
+            else:
+                emoji = "🔴"
+                at_risk_count += 1
+
+            # Fetch candidates and build stage distribution
+            candidate_count = 0
+            stage_dist: dict[str, int] = {}
+            try:
+                talents = await self.inhire._request("GET", f"/job-talents/{job_id}/talents")
+                if isinstance(talents, list):
+                    candidate_count = len(talents)
+                    for t in talents:
+                        stage = t.get("stageName") or "Sem etapa"
+                        stage_dist[stage] = stage_dist.get(stage, 0) + 1
+            except Exception:
+                # Fallback to talentsCount from job listing
+                candidate_count = job.get("talentsCount", 0)
+
+            total_candidates += candidate_count
+
+            # Build pipeline summary string
+            if stage_dist:
+                pipeline_parts = [f"{stage}({count})" for stage, count in stage_dist.items()]
+                pipeline_str = " → ".join(pipeline_parts)
+            else:
+                pipeline_str = "(vazio)"
+
+            candidate_label = f"{candidate_count} candidato{'s' if candidate_count != 1 else ''}"
+            day_label = f"{days_open}d aberta"
+
+            job_lines.append(
+                f"{emoji} *{job_name}* — {candidate_label}, {day_label}\n"
+                f"  Pipeline: {pipeline_str}"
+            )
+
+        total_jobs = len(user_jobs)
+        candidate_total_label = f"{total_candidates} candidato{'s' if total_candidates != 1 else ''}"
+        risk_label = f"{at_risk_count} em risco (30d+)" if at_risk_count > 0 else "nenhuma em risco"
+
+        summary = (
+            f"*Resumo:* {total_jobs} vaga{'s' if total_jobs != 1 else ''} ativa{'s' if total_jobs != 1 else ''}, "
+            f"{candidate_total_label}, {risk_label}"
+        )
+
+        text = "📊 *Relatório Semanal*\n\n" + "\n\n".join(job_lines) + "\n\n" + summary
+
+        await self._send_proactive(slack_user_id, channel_id, text, alert_type="weekly_report")
+        logger.info("Relatório semanal enviado para %s", inhire_name or slack_user_id)
+
+    # ==============================================================================
     # WEEKLY PATTERN CONSOLIDATION (mini KAIROS)
     # ==============================================================================
 
