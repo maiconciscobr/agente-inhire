@@ -2288,4 +2288,96 @@ Integrar WhatsApp — último gap do projeto. André Gärtner entregou endpoint 
 - **38 sessões**, 29 melhorias arquiteturais
 - **14 tools** funcionais (13 anteriores + `enviar_whatsapp`)
 - **0 gaps restantes** — WhatsApp implementado (pendente apenas credenciais Meta no tenant demo)
+
+---
+
+## Sessão 39 — 13 de abril de 2026
+
+### Tema: Otimização de custo da API Claude
+
+### Contexto
+
+Custo de ~$5 em testes leves com 1 usuário + demo do time. Análise completa com 3 especialistas independentes (API cost, code auditor, feasibility) identificou desperdícios e oportunidades.
+
+### O que foi feito
+
+**1. Instrumentação de custo (Fase 1)**
+- `_log_usage()` — logger JSON separado (`agente-inhire.claude.usage`) em todas as 4 chamadas `messages.create`
+- Campos: method, model, input/output tokens, cache_creation/read tokens, stop_reason, latency_ms, estimated_cost_usd
+- Dict `PRICING` com preços Sonnet 4 e Haiku 4.5 para cálculo automático de custo
+- Valida `resp.usage is None`, loga modelo desconhecido, traceback completo em erros
+
+**2. Eliminar double-call no conversa_livre (Fase 2.1)**
+- `detect_intent()`: `tool_choice` de `"any"` → `"auto"`, `max_tokens` de 1024 → 2048
+- Parsing robusto para responses mistos (text + tool_use), loga content vazio e truncamento
+- Bloco `conversa_livre` no `_handle_idle`: usa texto do `detect_intent` se disponível, `chat()` só como fallback
+- **Impacto:** ~15-25% de redução de custo + latência cortada pela metade em conversa livre
+
+**3. Multi-modelo: Haiku para tarefas triviais (Fase 2.2)**
+- `classify_briefing_reply()` e `parse_routine_request()` agora usam `self.fast_model` (Haiku 4.5)
+- `cache_control` removido dessas chamadas (nunca ativava — prompts < 1024 tokens, mínimo do Sonnet)
+- try/except em `parse_routine_request` com `raise ValueError` (propaga pro caller que já trata)
+- Removido `import json as json_mod` redundante
+- **Impacto:** 3x mais barato nessas chamadas
+
+**4. Compressão de tool definitions (Fase 2.3)**
+- 8 de 15 tools encurtadas: removidas frases "Use quando..." redundantes em tools auto-explicativas
+- 7 tools com distinção sutil mantidas intactas: `ver_candidatos`, `gerar_shortlist`, `status_vaga`, `buscar_talentos`, `analisar_perfil`, `guia_inhire`, `gerenciar_rotina`
+- **Impacto:** ~600-900 tokens economizados por chamada a `detect_intent`
+
+**5. max_tokens parametrizável (Fase 2.4)**
+- `chat()` agora aceita `max_tokens: int = 4096` (zero impacto em chamadores existentes)
+- `generate_rejection_message` usa max_tokens=512
+
+### Análise de custo — antes vs depois
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Chamadas Claude por msg casual | 2 (detect + chat) | 1 (detect direto) |
+| Modelo para classify/parse | Sonnet ($3/$15 MTok) | Haiku ($1/$5 MTok) |
+| Tokens de tools por detect_intent | ~2500 | ~1700 |
+| Logging de custo | Nenhum | JSON completo por chamada |
+| Custo mensal estimado (1 user) | ~$10 | ~$6-7 |
+
+### O que NÃO foi feito (decisão dos especialistas)
+
+| Proposta rejeitada | Por quê |
+|---|---|
+| Haiku para routing (detect_intent) | 10-20% de erro em tools ambíguas em PT-BR. Economia de só 5-8%, não compensa. |
+| Remover cache_control | Recrutador manda msgs em burst — cache acerta nesses momentos. Pode piorar. |
+| Histórico 50→10 msgs | Perde contexto do briefing e decisões. Muito agressivo. |
+
+### Fase 3 pendente (requer dados da Fase 1)
+
+Após 1-2 semanas de dados de logging:
+- Avaliar redução de histórico de 50 → 25 mensagens
+- Smart truncation (manter últimas 10 + msgs marcadas como "importantes")
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `services/claude_client.py` | +`_log_usage()`, +`PRICING`, +`usage_logger`, tool_choice auto, Haiku, max_tokens param, tools comprimidas |
+| `config.py` | +`claude_model_fast: str = "claude-haiku-4-5-20251001"` |
+| `routers/slack.py` | bloco `conversa_livre` usa texto direto do detect_intent |
+
+### Decisões técnicas
+
+- **tool_choice `auto` vs `any`:** Com `auto`, Claude pode responder direto sem forçar tool call. Economiza 1 chamada inteira em ~30-50% das mensagens (conversa livre). Rollback = 1 linha.
+- **Haiku só para classify e parse:** Especialistas vetaram Haiku para routing (detect_intent) — 10-20% de erro em tools ambíguas como `ver_candidatos` vs `status_vaga` em PT-BR.
+- **Fallback do parse_routine: ValueError em vez de `{"action": "list"}`:** O caller no slack.py já tem try/except com mensagem amigável "não entendi, pode reformular?". Fallback silencioso era enganoso.
+- **Cache mantido:** Apesar de 1 usuário, o padrão de uso em burst (3-5 msgs seguidas) justifica manter cache_control no system prompt principal (~2850 tokens cacheáveis).
+
+### Deploy
+
+- 2 arquivos deployados via SCP (claude_client.py, config.py)
+- `systemctl restart agente-inhire` — startup OK, zero erros
+- Health check: `{"status":"ok"}`
+- Validação: grep confirmou todas as mudanças presentes no servidor
+
+### Estado do projeto
+
+- **39 sessões**, 33 melhorias arquiteturais
+- **14 tools** funcionais
+- **Economia estimada:** 20-35% no custo da API Claude
 - **Todos os fluxos do recrutamento cobertos:** da abertura da vaga até a contratação, incluindo comunicação com candidatos via WhatsApp

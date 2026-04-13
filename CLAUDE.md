@@ -80,7 +80,7 @@ handlers = {
 - `mover_candidatos` → carrega candidatos → shortlist (inclui sem score) → aprovação → `_move_approved_candidates()` (batch)
 - `reprovar_candidatos` → carrega candidatos → filtra não-selecionados → aprovação → `_reject_candidates()` (reason=enum, comment=devolutiva)
 - `ver_memorias` → `_show_memories()` (padrões, config, insights semanais)
-- `conversa_livre` → `claude.chat()` direto
+- `conversa_livre` → resposta direta do `detect_intent` (tool_choice: auto) ou `claude.chat()` fallback
 
 **Layer 1 — Funcional (resolvido sessão 33):**
 - `agendar_entrevista` → `_start_scheduling()` (provider: manual, sem calendário)
@@ -214,6 +214,10 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 27 | **Rotinas dinâmicas** — RoutineService (CRUD Redis + APScheduler), 4 tipos, linguagem natural | ✅ | 36 |
 | 28 | **UX conversacional** — remover keywords expostas, briefing por intent via Claude | ✅ | 37 |
 | 29 | **WhatsApp integration** — envio via API InHire, tool livre + oferta pós-reprovação e agendamento | ✅ | 38 |
+| 30 | **Instrumentação de custo** — `_log_usage()` em todas as chamadas Claude, JSON com tokens/custo/latência | ✅ | 39 |
+| 31 | **tool_choice auto** — elimina double-call no `conversa_livre`, detect_intent responde direto | ✅ | 39 |
+| 32 | **Multi-modelo** — Haiku para `classify_briefing_reply` e `parse_routine_request` (3x mais barato) | ✅ | 39 |
+| 33 | **Compressão de tools** — 8 de 15 descriptions encurtadas (~600-900 tokens/chamada economizados) | ✅ | 39 |
 
 ---
 
@@ -240,5 +244,5 @@ MCP server `context7` configurado em `.mcp.json`. Busca docs atualizadas direto 
 | Servidor | `ssh -i ~/.ssh/n8n_rescue_key root@65.109.160.97` |
 | InHire API | `https://api.inhire.app` — Tenant: `demo` — Auth: `POST https://auth.inhire.app/login` |
 | Slack Bot | Token no `.env` do servidor |
-| Claude | Modelo: `claude-sonnet-4-20250514` — Key no `.env` |
+| Claude | Modelo principal: `claude-sonnet-4-20250514`, fast: `claude-haiku-4-5-20251001` — Key no `.env` |
 | Redis | `redis://localhost:6379/2` |
