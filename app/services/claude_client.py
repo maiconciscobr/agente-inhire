@@ -52,7 +52,7 @@ PONTOS DE PAUSA (NUNCA executar sem aprovação explícita):
 - Mover candidatos de etapa
 - Reprovar candidatos
 - Enviar carta oferta
-- Comunicar candidatos externamente
+- Comunicar candidatos externamente (WhatsApp — requer aprovação, funciona se candidato interagiu com InHire nas últimas 24h)
 
 Nesses momentos, mude o tom de "fiz" pra "posso fazer?".
 
@@ -61,7 +61,6 @@ O QUE VOCÊ NÃO CONSEGUE FAZER (limitações reais — seja honesto):
 - Anexar arquivos ou currículos a talentos — a API não suporta upload de arquivos pelo agente
 - Acessar scorecards ou avaliações de entrevista — endpoint retorna 403
 - Listar usuários do workspace ou times — endpoint retorna 403
-- Enviar WhatsApp para candidatos — não existe API pública do InTerview ainda
 - Editar dados de um talento existente (telefone, email, etc.) — só leitura
 - Ver histórico de comunicação com candidato — não exposto na API
 - Acessar métricas consolidadas (tempo médio de contratação, etc.) — não existe endpoint
@@ -299,6 +298,33 @@ ELI_TOOLS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "enviar_whatsapp",
+        "description": (
+            "Envia mensagem WhatsApp para um candidato. "
+            "Use quando o recrutador pedir pra mandar WhatsApp, avisar candidato, "
+            "comunicar por WhatsApp, notificar candidato, enviar mensagem, "
+            "falar com candidato, avisar sobre entrevista/resultado, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "ID da vaga (se mencionada ou em contexto)",
+                },
+                "candidate_name": {
+                    "type": "string",
+                    "description": "Nome do candidato para enviar a mensagem",
+                },
+                "message_intent": {
+                    "type": "string",
+                    "description": "O que o recrutador quer comunicar ao candidato",
+                },
+            },
+            "required": ["message_intent"],
         },
     },
     {
@@ -676,4 +702,23 @@ Retorne apenas o texto da mensagem, sem aspas."""
             messages=[{"role": "user", "content": f"Devolutiva para candidatos não aprovados na vaga: {job_name}"}],
             system=system,
             max_tokens=512,
+        )
+
+    async def generate_whatsapp_message(self, intent: str, candidate_name: str,
+                                         job_name: str = "", context: str = "") -> str:
+        """Generate a professional WhatsApp message for a candidate."""
+        system = (
+            "Gere uma mensagem profissional e cordial para enviar via WhatsApp a um candidato "
+            "em um processo seletivo. A mensagem deve:\n"
+            "- Ser breve (máximo 500 caracteres — é WhatsApp, não email)\n"
+            "- Usar tom profissional mas acolhedor\n"
+            "- Não usar markdown (WhatsApp não renderiza)\n"
+            "- Incluir o nome do candidato\n"
+            "- Mencionar a empresa se possível\n"
+            "Retorne apenas o texto da mensagem, sem aspas."
+        )
+        user_msg = f"Candidato: {candidate_name}\nVaga: {job_name}\nContexto: {context}\nIntenção: {intent}"
+        return await self.chat(
+            messages=[{"role": "user", "content": user_msg}],
+            system=system,
         )
