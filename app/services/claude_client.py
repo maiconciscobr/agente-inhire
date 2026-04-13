@@ -84,16 +84,14 @@ ELI_TOOLS = [
     {
         "name": "listar_vagas",
         "description": (
-            "Lista as vagas abertas do recrutador no InHire. "
-            "Use quando o recrutador perguntar sobre suas vagas, quiser ver vagas ativas, ou pedir uma lista."
+            "Lista as vagas abertas do recrutador no InHire."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "criar_vaga",
         "description": (
-            "Inicia abertura de uma nova vaga a partir do briefing do recrutador. "
-            "Use quando o recrutador quiser abrir uma posição, contratar alguém, recrutar, ou criar uma nova vaga."
+            "Inicia abertura de uma nova vaga a partir do briefing do recrutador."
         ),
         "input_schema": {
             "type": "object",
@@ -204,8 +202,7 @@ ELI_TOOLS = [
     {
         "name": "mover_candidatos",
         "description": (
-            "Avança candidatos aprovados para a próxima etapa do pipeline. "
-            "Use quando o recrutador quiser mover, avançar, ou aprovar candidatos para próxima fase."
+            "Avança candidatos aprovados para a próxima etapa do pipeline."
         ),
         "input_schema": {
             "type": "object",
@@ -218,8 +215,7 @@ ELI_TOOLS = [
     {
         "name": "reprovar_candidatos",
         "description": (
-            "Reprova candidatos em lote com envio de devolutiva profissional. "
-            "Use quando o recrutador quiser reprovar, rejeitar, dispensar candidatos, ou enviar devolutiva."
+            "Reprova candidatos em lote com envio de devolutiva profissional."
         ),
         "input_schema": {
             "type": "object",
@@ -232,8 +228,7 @@ ELI_TOOLS = [
     {
         "name": "agendar_entrevista",
         "description": (
-            "Agenda uma entrevista com candidato, com integração automática de calendário. "
-            "Use quando o recrutador quiser agendar, marcar entrevista, ou scheduling."
+            "Agenda uma entrevista com candidato."
         ),
         "input_schema": {
             "type": "object",
@@ -246,8 +241,7 @@ ELI_TOOLS = [
     {
         "name": "carta_oferta",
         "description": (
-            "Cria e envia carta oferta para um candidato aprovado. "
-            "Use quando o recrutador quiser enviar oferta, proposta, ou offer letter."
+            "Cria e envia carta oferta para um candidato aprovado."
         ),
         "input_schema": {
             "type": "object",
@@ -280,10 +274,7 @@ ELI_TOOLS = [
         "name": "ver_memorias",
         "description": (
             "Mostra o que o Eli sabe/lembra sobre o recrutador: padrões de decisão, "
-            "vagas acompanhadas, configurações personalizadas. "
-            "Use quando o recrutador perguntar 'o que você sabe sobre mim?', "
-            "'o que você lembra?', 'suas memórias', 'meu perfil', ou quiser saber "
-            "o que o agente aprendeu sobre ele."
+            "vagas acompanhadas, configurações personalizadas."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -333,8 +324,7 @@ ELI_TOOLS = [
     {
         "name": "conversa_livre",
         "description": (
-            "Responde perguntas gerais sobre recrutamento, processos do InHire, ou qualquer assunto "
-            "que não se encaixe nas outras ferramentas. Use como fallback."
+            "Fallback para perguntas gerais sobre recrutamento ou qualquer assunto."
         ),
         "input_schema": {
             "type": "object",
@@ -408,11 +398,11 @@ class ClaudeService:
             logger.warning("Erro ao logar usage: %s", e)
 
     async def chat(self, messages: list[dict], system: str | None = None,
-                   dynamic_context: str | None = None) -> str:
+                   dynamic_context: str | None = None, max_tokens: int = 4096) -> str:
         t0 = time.monotonic()
         resp = await self.client.messages.create(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             system=self._build_system(system or SYSTEM_PROMPT_STATIC, dynamic_context),
             messages=messages,
         )
@@ -685,4 +675,5 @@ Retorne apenas o texto da mensagem, sem aspas."""
         return await self.chat(
             messages=[{"role": "user", "content": f"Devolutiva para candidatos não aprovados na vaga: {job_name}"}],
             system=system,
+            max_tokens=512,
         )
