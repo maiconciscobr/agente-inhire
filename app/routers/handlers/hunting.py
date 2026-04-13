@@ -216,6 +216,19 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
             for stage_name, count in stage_counts.items():
                 report += f"  • {stage_name}: {count}\n"
 
+            # Calculate conversion funnel
+            if stages:
+                funnel_lines = ["\n*Funil de conversão:*"]
+                for stage in stages:
+                    stage_name = stage.get("name", "")
+                    count = stage_counts.get(stage_name, 0)
+                    pct = (count / total * 100) if total > 0 else 0
+                    bar_filled = int(pct / 5)
+                    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+                    funnel_lines.append(f"  {stage_name}: `{bar}` {count} ({pct:.0f}%)")
+                funnel_text = "\n".join(funnel_lines)
+                report += funnel_text + "\n"
+
         suggestion = _suggest_next_action(
             conv,
             total_candidates=total,
