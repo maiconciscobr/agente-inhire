@@ -75,6 +75,17 @@ async def lifespan(app: FastAPI):
         minute=30,
         id="weekly_consolidation",
     )
+    # Weekly consolidated report — Monday 9:30 BRT (= 12:30 UTC)
+    scheduler.add_job(
+        app.state.monitor._weekly_report,
+        trigger="cron",
+        day_of_week="mon",
+        hour=12,
+        minute=30,
+        timezone="America/Sao_Paulo",
+        id="weekly_report",
+        replace_existing=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
 
