@@ -1480,6 +1480,54 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
                 conv.state = FlowState.IDLE
                 await _send(conv, slack, channel_id, "Ok, carta oferta cancelada.")
 
+        # --- Add analyzed profile to job ---
+        elif callback_id == "add_analyzed_profile":
+            if action_id == "approve":
+                profile_data = conv.get_context("analyzed_profile_data") or {}
+                job_id = conv.get_context("current_job_id")
+                if profile_data and job_id:
+                    # Deduplicate: check by email then by LinkedIn
+                    existing = None
+                    if profile_data.get("email"):
+                        existing = await inhire.get_talent_by_email(profile_data["email"])
+                    if not existing and profile_data.get("linkedin_url"):
+                        username = profile_data["linkedin_url"].rstrip("/").split("/")[-1]
+                        if username:
+                            existing = await inhire.get_talent_by_linkedin(username)
+
+                    try:
+                        if existing:
+                            await inhire.add_existing_talent_to_job(job_id, existing["id"])
+                            name = existing.get("name", "Candidato")
+                        else:
+                            talent_payload = {
+                                "name": profile_data.get("name", "Sem nome"),
+                                "email": profile_data.get("email") or "",
+                                "phone": profile_data.get("phone") or "",
+                            }
+                            linkedin_url = profile_data.get("linkedin_url") or ""
+                            if linkedin_url:
+                                talent_payload["linkedinUsername"] = linkedin_url.rstrip("/").split("/")[-1]
+                            await inhire.add_talent_to_job(job_id, talent_payload, source="manual")
+                            name = talent_payload["name"]
+
+                        job_name = conv.get_context("current_job_name", "")
+                        await _send(
+                            conv, slack, channel_id,
+                            f"✅ *{name}* adicionado à vaga *{job_name}*!",
+                        )
+                    except Exception as e:
+                        logger.exception("Erro ao adicionar candidato analisado: %s", e)
+                        await _send(conv, slack, channel_id, f"❌ Não consegui adicionar: {e}")
+                else:
+                    await _send(
+                        conv, slack, channel_id,
+                        "Dados do perfil não disponíveis. Tente analisar novamente.",
+                    )
+            elif action_id in ("adjust", "reject"):
+                await _send(conv, slack, channel_id, "Ok, candidato não adicionado.")
+            conv.state = FlowState.IDLE
+
     except Exception as e:
         logger.exception("Erro ao processar aprovação: %s", e)
         await app.state.slack.send_message(channel_id, f"Erro: {e}")

@@ -1,7 +1,8 @@
 import json
 import logging
+import time
 
-from routers.handlers.helpers import _send, _suggest_next_action
+from routers.handlers.helpers import _send, _send_approval, _suggest_next_action
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -46,6 +47,40 @@ Use formatação Slack. Seja conciso."""
         system=system,
     )
     await _send(conv, slack, channel_id, response)
+
+    # Extract candidate data for potential add-to-job
+    try:
+        t0 = time.monotonic()
+        extract_resp = await claude.client.messages.create(
+            model=claude.fast_model,
+            max_tokens=256,
+            system=[{
+                "type": "text",
+                "text": (
+                    "Extraia dados factuais em JSON. Campos: name, email, phone, linkedin_url. "
+                    "Se não encontrar um campo, use null. Retorne APENAS o JSON, sem markdown."
+                ),
+            }],
+            messages=[{"role": "user", "content": f"Extraia os dados do candidato:\n\n{text}"}],
+        )
+        claude._log_usage("extract_profile_data", extract_resp, int((time.monotonic() - t0) * 1000))
+        raw = extract_resp.content[0].text.strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+        conv.set_context("analyzed_profile_data", parsed)
+    except Exception:
+        parsed = None
+        conv.set_context("analyzed_profile_data", None)
+
+    # Offer to add candidate to current job
+    job_id = conv.get_context("current_job_id")
+    if job_id and parsed and parsed.get("name"):
+        await _send_approval(
+            conv, slack, channel_id,
+            title="Adicionar candidato à vaga?",
+            details=f"Adicionar *{parsed.get('name', '')}* à vaga *{job_name}*",
+            callback_id="add_analyzed_profile",
+        )
 
 
 async def _generate_linkedin_search(conv, app, channel_id: str):
