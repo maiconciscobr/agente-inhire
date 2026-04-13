@@ -260,6 +260,11 @@ class InHireClient:
             "POST", f"/job-talents/appointments/{job_talent_id}/create", json=payload
         )
 
+    async def update_appointment(self, appointment_id: str, payload: dict) -> dict | None:
+        """Update an existing appointment (reschedule)."""
+        logger.info("Atualizando agendamento %s", appointment_id)
+        return await self._request("PATCH", f"/job-talents/appointments/{appointment_id}/patch", json=payload)
+
     async def get_appointment(self, appointment_id: str) -> dict:
         return await self._request("GET", f"/job-talents/appointments/{appointment_id}/get")
 

@@ -89,8 +89,9 @@ async def _start_offer_flow(conv, app, channel_id: str, text: str):
             "\nMe diga:\n"
             "• *Número* do candidato\n"
             "• *Salário* oferecido\n"
-            "• *Email do aprovador* (quem precisa aprovar antes de enviar)\n\n"
-            "Exemplo: `1 salário 18000 aprovador joao@empresa.com`\n"
+            "• *Email do aprovador* (quem precisa aprovar antes de enviar)\n"
+            "• *Data de início* prevista\n\n"
+            "Exemplo: `1 salário 18000 aprovador joao@empresa.com início 01/06/2025`\n"
             "Ou me passe as informações de forma livre."
         )
 
@@ -115,11 +116,12 @@ async def _handle_offer_input(conv, app, channel_id: str, text: str):
 1. Qual candidato (número ou nome)
 2. Salário oferecido
 3. Email do aprovador
+4. Data de início (se mencionada)
 
 Retorne JSON puro:
-{"candidate_index": number, "salary": number, "approver_email": "email", "approver_name": "nome se mencionado"}
+{"candidate_index": number, "salary": number, "approver_email": "email", "approver_name": "nome se mencionado", "start_date": "DD/MM/YYYY ou vazio se não mencionado"}
 
-Se faltar algo, retorne {"error": "o que falta"}"""
+Se faltar algo obrigatório (candidato, salário ou aprovador), retorne {"error": "o que falta"}"""
 
     candidate_list = json.dumps([
         {"index": i+1, "name": _talent_name(a)}
@@ -170,6 +172,8 @@ Se faltar algo, retorne {"error": "o que falta"}"""
         "salary": salary,
         "approver_email": approver_email,
         "approver_name": approver_name,
+        "start_date": parsed.get("start_date", ""),
+        "raw_input": text,
     }
     conv.set_context("offer_details", offer_details)
 
@@ -228,14 +232,30 @@ async def _create_and_send_offer(conv, app, channel_id: str):
             "language": "pt-BR",
         }
 
-        # Use first template if available
+        # Select template — match by name or number from user input
         if templates:
-            payload["templateId"] = templates[0].get("id", "")
+            selected_template = templates[0]  # default to first
+            if len(templates) > 1:
+                text_lower = (details.get("candidate_name", "") or "").lower()
+                # Use original user text stored during offer input if available
+                raw_input = details.get("raw_input", "").lower()
+                search_text = raw_input or text_lower
+                for i, t in enumerate(templates):
+                    t_name = t.get("name", "").lower()
+                    if t_name and t_name in search_text:
+                        selected_template = t
+                        break
+                    # Also match by number ("template 2", "modelo 2")
+                    if str(i + 1) in search_text.split():
+                        selected_template = t
+                        break
+
+            payload["templateId"] = selected_template.get("id", "")
             payload["templateVariableValues"] = {
                 "salario": str(details.get("salary", "")),
                 "nomeCargo": job_name,
                 "nomeCandidato": candidate_name,
-                "dataInicio": "",
+                "dataInicio": details.get("start_date", ""),
             }
 
         result = await inhire.create_offer_letter(payload)
