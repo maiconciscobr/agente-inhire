@@ -9,6 +9,16 @@ from services.inhire_auth import InHireAuth
 logger = logging.getLogger("agente-inhire.inhire")
 
 
+class WhatsAppWindowExpired(Exception):
+    """422 — Janela de 24h do WhatsApp expirada."""
+    pass
+
+
+class WhatsAppInvalidPhone(Exception):
+    """400 — Telefone invalido para WhatsApp."""
+    pass
+
+
 class InHireClient:
     """HTTP client for InHire API operations."""
 
@@ -278,6 +288,35 @@ class InHireClient:
     async def list_email_templates(self) -> list:
         """List available email templates."""
         return await self._request("GET", "/comms/emails/templates")
+
+    # --- WhatsApp ---
+    async def send_whatsapp(self, phone: str, message: str) -> dict:
+        """Send WhatsApp message to a candidate via InHire subscription-assistant."""
+        # Validate phone locally
+        clean_phone = "".join(c for c in phone if c.isdigit())
+        if len(clean_phone) < 10 or len(clean_phone) > 15:
+            raise WhatsAppInvalidPhone(f"Telefone invalido: {phone}")
+
+        # Truncate message if too long
+        if len(message) > 4096:
+            message = message[:4093] + "..."
+
+        logger.info("Enviando WhatsApp para %s (%d chars)", clean_phone[:4] + "****", len(message))
+
+        await self.auth.ensure_valid_token()
+        resp = await self._client.request(
+            "POST",
+            f"{self.base_url}/subscription-assistant/tenant/{self.auth.tenant}/send",
+            headers=self.auth.headers,
+            json={"phone": clean_phone, "message": message},
+        )
+
+        if resp.status_code == 422:
+            raise WhatsAppWindowExpired("Janela de 24h expirada")
+        if resp.status_code == 400:
+            raise WhatsAppInvalidPhone(resp.text)
+        resp.raise_for_status()
+        return resp.json()
 
     # --- Talent Search (Typesense) ---
     async def get_typesense_key(self) -> dict:
