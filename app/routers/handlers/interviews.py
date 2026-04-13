@@ -242,12 +242,24 @@ async def _create_and_send_offer(conv, app, channel_id: str):
         offer_id = result.get("id", "")
         status = result.get("status", "")
 
+        # Get document URL for preview
+        doc_url = ""
+        if offer_id:
+            try:
+                doc_info = await inhire.get_offer_document_url(offer_id)
+                doc_url = doc_info.get("url", "") if isinstance(doc_info, dict) else str(doc_info or "")
+            except Exception:
+                pass
+
+        doc_line = f"\n📄 <{doc_url}|Ver documento da oferta>" if doc_url else ""
+
         await _send(
             conv, slack, channel_id,
             f"✅ Carta oferta criada!\n\n"
             f"*Candidato:* {candidate_name}\n"
             f"*ID:* `{offer_id}`\n"
-            f"*Status:* {status}\n\n"
+            f"*Status:* {status}"
+            f"{doc_line}\n\n"
             f"O aprovador receberá uma notificação para revisar e assinar.\n"
             f"Após aprovação, a carta será enviada ao candidato automaticamente.",
         )
