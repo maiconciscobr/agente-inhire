@@ -156,6 +156,63 @@ async def _search_talents(conv, app, channel_id: str, tool_input: dict):
         )
 
 
+async def _compare_jobs(conv, app, channel_id: str):
+    """Compare active jobs performance side by side."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    await _send(conv, slack, channel_id, "Comparando suas vagas... ⏳")
+
+    try:
+        jobs_resp = await inhire._request("POST", "/jobs/paginated/lean", json={"limit": 20})
+        active = [j for j in jobs_resp.get("results", []) if j.get("status") == "active"]
+
+        if not active:
+            await _send(conv, slack, channel_id, "Nenhuma vaga ativa pra comparar.")
+            return
+
+        from datetime import datetime, timezone
+
+        comparisons = []
+        for job in active[:10]:
+            job_id = job.get("id", "")
+            job_name = job.get("name", "")
+            candidates = await inhire.list_job_talents(job_id)
+
+            days_open = 0
+            created = job.get("createdAt", "")
+            if created:
+                try:
+                    c_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    days_open = (datetime.now(timezone.utc) - c_dt).days
+                except Exception:
+                    pass
+
+            comparisons.append({
+                "name": job_name,
+                "candidates": len(candidates),
+                "days_open": days_open,
+                "velocity": round(len(candidates) / max(days_open, 1), 1),
+            })
+
+        comparisons.sort(key=lambda x: x["velocity"], reverse=True)
+
+        msg = "📊 *Comparação de Vagas*\n\n"
+        for i, c in enumerate(comparisons, 1):
+            emoji = "🏆" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"*{i}.*"
+            msg += (
+                f"{emoji} *{c['name']}*\n"
+                f"  Candidatos: {c['candidates']} | Dias aberta: {c['days_open']} | "
+                f"Velocidade: {c['velocity']} cand/dia\n\n"
+            )
+
+        await _send(conv, slack, channel_id, msg)
+
+    except Exception as e:
+        logger.exception("Erro ao comparar vagas: %s", e)
+        await _send(conv, slack, channel_id, f"❌ Erro ao comparar: {e}")
+
+
 async def _job_status_report(conv, app, channel_id: str, job_id: str):
     """Generate a status report for a job including SLA tracking."""
     slack = app.state.slack

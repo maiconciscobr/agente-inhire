@@ -352,6 +352,14 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "comparar_vagas",
+        "description": "Compara performance de vagas abertas (SLA, candidatos, velocidade)",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "conversa_livre",
         "description": (
             "Fallback para perguntas gerais sobre recrutamento ou qualquer assunto."

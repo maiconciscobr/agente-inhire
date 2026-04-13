@@ -27,7 +27,7 @@ from routers.handlers.interviews import (
     _start_offer_flow, _handle_offer_input, _create_and_send_offer,
     _start_scheduling, _handle_scheduling_input,
 )
-from routers.handlers.hunting import _analyze_profile, _generate_linkedin_search, _job_status_report, _search_talents
+from routers.handlers.hunting import _analyze_profile, _compare_jobs, _generate_linkedin_search, _job_status_report, _search_talents
 from services.routines import RoutineService
 
 logger = logging.getLogger("agente-inhire.slack-router")
@@ -890,6 +890,9 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
 
     elif tool == "buscar_talentos":
         await _search_talents(conv, app, channel_id, tool_input)
+
+    elif tool == "comparar_vagas":
+        await _compare_jobs(conv, request.app, channel_id)
 
     elif tool == "enviar_whatsapp":
         await _handle_send_whatsapp(conv, app, channel_id, tool_input)
