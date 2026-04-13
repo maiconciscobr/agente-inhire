@@ -555,7 +555,7 @@ class ProactiveMonitor:
                     f"🚨 *SLA estourado — {job_name}*\n"
                     f"SLA era de {sla} dias, vaga está aberta há {days_open} dias.\n"
                     f"Candidatos: {talents_count}\n"
-                    f'Diga "status da vaga" para ver detalhes.',
+                    f"Quer ver o status detalhado?",
                     alert_type="sla_expired",
                 )
                 self._mark_alerted(job_id, "sla_expired")
@@ -565,7 +565,7 @@ class ProactiveMonitor:
                     slack_user_id, channel_id,
                     f"⚠️ *SLA em {days_remaining} dias — {job_name}*\n"
                     f"Candidatos: {talents_count}\n"
-                    f'Diga "candidatos" para ver a triagem.',
+                    f"Quer ver a triagem dos candidatos?",
                     alert_type="sla_warning",
                 )
                 self._mark_alerted(job_id, "sla_warning")
@@ -625,7 +625,7 @@ class ProactiveMonitor:
                             slack_user_id, channel_id,
                             f"🌟 *Candidato excepcional — {job_name}*\n"
                             f"*{candidate_name}* chegou com score *{score}*!\n"
-                            f'Quer que eu te passe os detalhes? Diz "candidatos".',
+                            f"Quer que eu te passe os detalhes?",
                             alert_type="exceptional_candidate",
                         )
                         self._mark_alerted(job_id, "exceptional", candidate_id)
@@ -636,7 +636,7 @@ class ProactiveMonitor:
                     slack_user_id, channel_id,
                     f"🎯 *Shortlist pronto — {job_name}*\n"
                     f"{len(high_fit)} candidatos com alto fit!\n"
-                    f'Diga "shortlist" para ver o resumo comparativo.',
+                    f"Quer ver o resumo comparativo?",
                     alert_type="shortlist_ready",
                 )
                 self._mark_alerted(job_id, "shortlist_ready")

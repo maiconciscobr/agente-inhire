@@ -142,7 +142,7 @@ def _suggest_next_action(conv, total_candidates: int = 0, high_fit: int = 0,
     if total_candidates == 0:
         return (
             f"\n\n💡 *Dica:* A vaga ainda não tem candidatos. "
-            f'Quer que eu gere uma *string de busca pro LinkedIn* pra você começar o hunting? Diz "busca linkedin".'
+            f"Quer que eu gere uma *string de busca pro LinkedIn* pra você começar o hunting?"
         )
 
     # Tem candidatos mas poucos com alto fit → sugere revisar critérios ou esperar
@@ -156,14 +156,14 @@ def _suggest_next_action(conv, total_candidates: int = 0, high_fit: int = 0,
     if high_fit >= 5 and not has_shortlist:
         return (
             f"\n\n💡 *Dica:* Já tem *{high_fit} candidatos com alto fit*! "
-            f'Que tal montar o shortlist comparativo? Diz "shortlist".'
+            f"Que tal montar o shortlist comparativo?"
         )
 
     # Tem candidatos alto fit (menos que 5) → sugere dar uma olhada
     if high_fit >= 1 and not has_shortlist:
         return (
             f"\n\n💡 *Dica:* Tem {high_fit} candidato(s) com alto fit. "
-            f'Diz "candidatos" pra ver a triagem detalhada.'
+            f"Quer ver a triagem detalhada?"
         )
 
     # Candidatos em etapa de entrevista → sugere acompanhar
@@ -181,7 +181,7 @@ def _suggest_next_action(conv, total_candidates: int = 0, high_fit: int = 0,
     if in_offer > 0:
         return (
             f"\n\n💡 *Dica:* Tem *{in_offer} candidato(s) na etapa de Offer*! "
-            f'Quer enviar uma carta oferta? Diz "carta oferta".'
+            f"Quer enviar uma carta oferta?"
         )
 
     return ""

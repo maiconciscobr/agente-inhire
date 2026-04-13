@@ -25,7 +25,7 @@ async def _start_screening_flow(conv, app, channel_id: str, text: str):
         await _send(
             conv, slack, channel_id,
             "Para qual vaga? Me passe o ID da vaga.\n"
-            'Diga "vagas abertas" para ver a lista.',
+            "Posso te mostrar suas vagas se quiser.",
         )
         return
 

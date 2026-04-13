@@ -920,7 +920,7 @@ async def _handle_routine(conv, app, channel_id: str, user_id: str, tool_input: 
         # Get active jobs for context
         try:
             jobs_resp = await app.state.inhire._request("POST", "/jobs/paginated/lean", json={"limit": 50})
-            active_jobs = [j for j in jobs_resp.get("results", []) if j.get("status") in ("open", "published")]
+            active_jobs = [j for j in jobs_resp.get("results", []) if j.get("status") == "open"]
         except Exception:
             active_jobs = []
 
