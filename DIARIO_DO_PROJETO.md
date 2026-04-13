@@ -2202,7 +2202,90 @@ Todos padronizados para `== "open"`.
 
 ### Estado do projeto
 
-- **37 sessões**, 27 melhorias arquiteturais
+- **37 sessões**, 28 melhorias arquiteturais
 - **13 tools** funcionais (12 anteriores + `gerenciar_rotina`)
 - **1 gap restante:** WhatsApp (sem API do InHire)
 - **Pendente:** deploy das sessões 36-37 no servidor
+
+---
+
+## Sessão 38 — 13 de abril de 2026
+
+### Objetivo
+
+Integrar WhatsApp — último gap do projeto. André Gärtner entregou endpoint de envio proativo.
+
+### Descobertas
+
+**Endpoint confirmado em produção** pelo André:
+- `POST https://api.inhire.app/subscription-assistant/tenant/{tenant}/send`
+- Body: `{"phone": "5511999998888", "message": "texto"}`
+- Mesmo JWT da API InHire (auto-refresh existente)
+- Janela de 24h: só funciona se candidato interagiu com WhatsApp do InHire nas últimas 24h
+- Sem suporte a templates Meta por enquanto
+
+**502 no tenant demo:** o endpoint existe mas retorna 502 — credenciais da Meta não configuradas no tenant `demo`. André avisado via Slack.
+
+### O que foi feito
+
+**1. `send_whatsapp()` no InHireClient — `inhire_client.py`**
+- Exceções tipadas: `WhatsAppWindowExpired` (422) e `WhatsAppInvalidPhone` (400)
+- Método usa `_client.request()` direto (não `_request()`) para checar status codes antes de `raise_for_status()`
+- Validação local de telefone (10-15 dígitos) e truncamento de mensagem (4096 chars)
+
+**2. Helpers de telefone — `helpers.py`**
+- `_normalize_phone()` — limpa formatação, prefixa `55` em números brasileiros, valida comprimento
+- `_talent_phone()` — extrai e normaliza telefone de registros job-talent da API InHire
+
+**3. Tool `enviar_whatsapp` — `claude_client.py`**
+- Nova tool no `ELI_TOOLS` (mensagem livre sob demanda)
+- `generate_whatsapp_message()` — gera mensagem profissional com limite de 500 chars, sem markdown
+- System prompt atualizado: removida limitação de WhatsApp, adicionada capacidade com nota sobre janela 24h
+
+**4. Handler `_handle_send_whatsapp` — `slack.py`**
+- Resolve job_id e candidato por nome
+- Se não encontra candidato, lista os que têm telefone
+- Gera mensagem via Claude → preview com botão de aprovação → envia
+
+**5. FlowState + callbacks — `conversation.py` + `slack.py`**
+- `WAITING_WHATSAPP_APPROVAL` no enum FlowState
+- 4 callback handlers: `whatsapp_free_approval`, `whatsapp_rejection_approval`, `whatsapp_move_approval`, `whatsapp_interview_approval`
+- Todos tratam 422 (janela expirada) e 400 (telefone inválido) com mensagens amigáveis
+
+**6. Integração nos fluxos existentes — `candidates.py` + `interviews.py`**
+- Após reprovar candidatos: oferece enviar devolutiva por WhatsApp (em lote)
+- Após agendar entrevista: oferece confirmar por WhatsApp
+- Só aparece se `comms_enabled == True` e candidato tem telefone
+
+### Arquivos modificados
+
+| Arquivo | Mudança |
+|---|---|
+| `services/inhire_client.py` | +`send_whatsapp()`, +exceções tipadas |
+| `routers/handlers/helpers.py` | +`_normalize_phone()`, +`_talent_phone()` |
+| `services/claude_client.py` | +tool `enviar_whatsapp`, +`generate_whatsapp_message()`, system prompt atualizado |
+| `services/conversation.py` | +`WAITING_WHATSAPP_APPROVAL` |
+| `routers/slack.py` | +`_handle_send_whatsapp`, +dispatch, +4 callback handlers, +imports |
+| `routers/handlers/candidates.py` | +oferta WhatsApp pós-reprovação |
+| `routers/handlers/interviews.py` | +oferta WhatsApp pós-agendamento |
+
+### Decisões técnicas
+
+- **`_client.request()` direto em vez de `_request()`:** o método `_request()` faz `raise_for_status()` indiscriminadamente. Para WhatsApp, precisamos checar 422 e 400 antes de levantar exceção.
+- **Oferta de WhatsApp é optional:** se candidato não tem telefone ou `comms_enabled` é False, o fluxo segue normalmente sem ofertar.
+- **Movimentação de etapa sem WhatsApp por enquanto:** o fluxo de mover candidatos já encadeia oferta de reprovação dos restantes. Adicionar WhatsApp ali criaria dois botões seguidos, confuso pro recrutador.
+- **502 tratado como "fora do ar":** sem mensagem alarmista pro recrutador. Quando o André configurar as credenciais, vai funcionar automaticamente.
+
+### Deploy
+
+- 7 arquivos deployados via SCP
+- `systemctl restart agente-inhire` — startup OK, zero erros
+- Health check: `{"status":"ok"}`
+- Endpoint WhatsApp: 502 (pendente configuração Meta no tenant demo)
+
+### Estado do projeto
+
+- **38 sessões**, 29 melhorias arquiteturais
+- **14 tools** funcionais (13 anteriores + `enviar_whatsapp`)
+- **0 gaps restantes** — WhatsApp implementado (pendente apenas credenciais Meta no tenant demo)
+- **Todos os fluxos do recrutamento cobertos:** da abertura da vaga até a contratação, incluindo comunicação com candidatos via WhatsApp

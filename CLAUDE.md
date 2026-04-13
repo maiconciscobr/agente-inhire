@@ -92,6 +92,9 @@ handlers = {
 **Layer 1 — Funcional (resolvido sessão 36):**
 - `gerenciar_rotina` → `_handle_routine()` (criar, listar, cancelar rotinas recorrentes via linguagem natural)
 
+**Layer 1 — Funcional (resolvido sessão 38):**
+- `enviar_whatsapp` → `_handle_send_whatsapp()` (mensagem livre + oferta pós-reprovação e agendamento)
+
 ---
 
 ## Armadilhas da API InHire
@@ -173,7 +176,7 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | Agendamento de entrevistas | ~~Service account sem calendário~~ | ~~André~~ | ✅ Resolvido (provider: manual) |
 | Mover candidatos via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
 | Reprovar em lote via API | ~~Endpoints errados~~ | ~~Corrigido sessão 9~~ | ✅ Corrigido |
-| ~~InTerview (WhatsApp)~~ | Em desenvolvimento por outro time | InHire | Aguardando API |
+| ~~InTerview (WhatsApp)~~ | ~~Em desenvolvimento por outro time~~ | ~~InHire~~ | ✅ Resolvido (sessão 38) — endpoint 502 no tenant demo (credenciais Meta pendentes) |
 | ~~Busca full-text no Banco de Talentos~~ | ~~Endpoint já existia~~ | ~~André Gärtner~~ | ✅ Resolvido (sessão 34) |
 
 ---
@@ -210,6 +213,7 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 26 | **Busca full-text talentos** — Typesense scoped key + busca direta, 86k+ talentos | ✅ | 34 |
 | 27 | **Rotinas dinâmicas** — RoutineService (CRUD Redis + APScheduler), 4 tipos, linguagem natural | ✅ | 36 |
 | 28 | **UX conversacional** — remover keywords expostas, briefing por intent via Claude | ✅ | 37 |
+| 29 | **WhatsApp integration** — envio via API InHire, tool livre + oferta pós-reprovação e agendamento | ✅ | 38 |
 
 ---
 
