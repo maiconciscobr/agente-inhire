@@ -722,6 +722,32 @@ Retorne apenas o texto da mensagem, sem aspas."""
             max_tokens=512,
         )
 
+    async def classify_rejection_reason(
+        self, candidate_name: str, candidate_summary: str, job_name: str, job_requirements: str,
+    ) -> str:
+        """Classify rejection reason into InHire enum: overqualified, underqualified, location, other."""
+        system = (
+            "Você classifica motivos de rejeição de candidatos. "
+            "Responda apenas: overqualified, underqualified, location, ou other."
+        )
+        user_content = (
+            f"Candidato: {candidate_name}\nResumo: {candidate_summary}\n"
+            f"Vaga: {job_name}\nRequisitos: {job_requirements}\n\n"
+            "Classifique o motivo de rejeição em UMA palavra: overqualified, underqualified, location, ou other.\n"
+            "Responda APENAS a palavra."
+        )
+        t0 = time.monotonic()
+        resp = await self.client.messages.create(
+            model=self.fast_model,
+            max_tokens=20,
+            system=[{"type": "text", "text": system}],
+            messages=[{"role": "user", "content": user_content}],
+        )
+        self._log_usage("classify_rejection_reason", resp, int((time.monotonic() - t0) * 1000))
+        reason = resp.content[0].text.strip().lower()
+        valid = {"overqualified", "underqualified", "location", "other"}
+        return reason if reason in valid else "other"
+
     async def generate_whatsapp_message(self, intent: str, candidate_name: str,
                                          job_name: str = "", context: str = "") -> str:
         """Generate a professional WhatsApp message for a candidate."""

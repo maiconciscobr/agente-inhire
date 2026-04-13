@@ -1,3 +1,4 @@
+import json
 import logging
 
 from services.conversation import FlowState
@@ -284,11 +285,30 @@ async def _reject_candidates(conv, app, channel_id: str):
     # Generate rejection message (goes as comment, not reason — reason is enum)
     rejection_msg = await claude.generate_rejection_message(job_name)
 
-    result = await inhire.bulk_reject(
-        [c["id"] for c in to_reject],
-        reason="other",
-        comment=rejection_msg,
-    )
+    # Classify rejection reason per candidate and group by reason
+    job_data = conv.get_context("job_data", {})
+    job_requirements = json.dumps(job_data.get("requirements", []), ensure_ascii=False) if job_data else ""
+
+    reason_groups: dict[str, list] = {}
+    for c in to_reject:
+        c_name = c.get("name", "")
+        c_summary = f"Score: {c.get('score', 'N/A')}, Stage: {c.get('stage', '')}, Location: {c.get('location', '')}"
+        reason = await claude.classify_rejection_reason(c_name, c_summary, job_name, job_requirements)
+        reason_groups.setdefault(reason, []).append(c)
+
+    # Reject each group with appropriate reason
+    total_rejected = 0
+    total_count = len(to_reject)
+
+    for reason, candidates in reason_groups.items():
+        r = await inhire.bulk_reject(
+            [c["id"] for c in candidates],
+            reason=reason,
+            comment=rejection_msg,
+        )
+        total_rejected += r.get("rejected", 0)
+
+    result = {"rejected": total_rejected, "total": total_count}
 
     next_stage = conv.get_context("next_stage_name", "")
     tip = ""
