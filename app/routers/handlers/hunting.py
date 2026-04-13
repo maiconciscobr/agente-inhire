@@ -169,6 +169,7 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
         stages = job.get("stages", [])
 
         # Calculate SLA
+        days_open = None
         sla_info = ""
         if created_at:
             from datetime import datetime, timezone
@@ -236,6 +237,30 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
             stage_counts=stage_counts,
         )
         report += suggestion
+
+        # AI-powered closing prediction
+        try:
+            if applications and stages:
+                claude = app.state.claude
+                prediction_prompt = (
+                    f"Vaga: {job_name}\n"
+                    f"Dias aberta: {days_open if days_open is not None else 'desconhecido'}\n"
+                    f"Total candidatos: {total}\n"
+                    f"Distribuição por etapa: {json.dumps(stage_counts, ensure_ascii=False)}\n"
+                    f"Alto fit: {screening_counts.get('pre-aproved', 0)}\n\n"
+                    f"Em UMA frase curta, estime quando esta vaga pode ser fechada e por quê. "
+                    f"Se a vaga está em risco, diga o que fazer. Seja direto."
+                )
+                pred_resp = await claude.client.messages.create(
+                    model=claude.fast_model,
+                    max_tokens=100,
+                    system=[{"type": "text", "text": "Você é analista de recrutamento. Faça previsões diretas baseadas nos dados. Uma frase apenas."}],
+                    messages=[{"role": "user", "content": prediction_prompt}],
+                )
+                prediction = pred_resp.content[0].text.strip()
+                report += f"\n\n🔮 *Previsão:* {prediction}"
+        except Exception as pred_err:
+            logger.warning("Erro na previsão de fechamento: %s", pred_err)
 
         await _send(conv, slack, channel_id, report)
 
