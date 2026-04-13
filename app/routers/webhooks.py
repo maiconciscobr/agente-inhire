@@ -86,6 +86,7 @@ async def _handle_stage_added(app, payload: dict):
         stage = payload.get("stageName", "Nova etapa")
         job_name = payload.get("jobName", "Vaga")
         job_id = payload.get("jobId", "")
+        job_talent_id = payload.get("jobTalentId") or payload.get("id", "")
         logger.info("Candidato %s movido para %s (vaga %s)", talent_name, stage, job_name)
 
         slack = app.state.slack
@@ -98,7 +99,7 @@ async def _handle_stage_added(app, payload: dict):
 
         if is_hired:
             # Celebrate! Find the recruiter who owns this job
-            await _celebrate_hire(app, talent_name, job_name, job_id)
+            await _celebrate_hire(app, talent_name, job_name, job_id, job_talent_id)
             return
 
         # Regular stage change — notify recruiter with active conversation on this job
@@ -110,11 +111,63 @@ async def _handle_stage_added(app, payload: dict):
                 )
                 break
 
+        # Task 17 — optionally notify candidate of stage advancement (opt-in per recruiter)
+        stage_lower_check = stage.lower()
+        is_rejection_or_hire = any(kw in stage_lower_check for kw in (
+            "contratado", "contratada", "hired", "offer accepted", "admitido", "admitida",
+            "rejeitado", "rejeitada", "reprovado", "reprovada", "rejected",
+        ))
+        if not is_rejection_or_hire:
+            try:
+                # Resolve recruiter_id via job ownership
+                recruiter_id = None
+                try:
+                    inhire = app.state.inhire
+                    jobs_data = await inhire._request("POST", "/jobs/paginated/lean", json={})
+                    all_jobs = jobs_data.get("results", []) if isinstance(jobs_data, dict) else jobs_data
+                    for job in all_jobs:
+                        if job.get("id") == job_id:
+                            recruiter_name = job.get("userName", "")
+                            users = user_mapping.get_all_users()
+                            for u in users:
+                                if u.get("inhire_name") == recruiter_name:
+                                    recruiter_id = u.get("slack_user_id")
+                                    break
+                            break
+                except Exception:
+                    pass
+
+                user_config = {}
+                if recruiter_id:
+                    user_config = user_mapping.get_user(recruiter_id) or {}
+
+                if user_config.get("auto_stage_notification", False):
+                    talent_data = payload.get("talent") or {}
+                    talent_email = talent_data.get("email", "")
+                    talent_name_notif = talent_data.get("name") or talent_name
+                    if talent_email:
+                        subject = f"Atualização sobre sua candidatura — {job_name}"
+                        body = (
+                            f"Olá {talent_name_notif},\n\n"
+                            f"Gostaríamos de informar que sua candidatura para a vaga de "
+                            f"{job_name} avançou para a etapa de {stage}.\n\n"
+                            f"Em breve entraremos em contato com mais detalhes.\n\n"
+                            f"Atenciosamente,\nEquipe de Recrutamento"
+                        )
+                        inhire = app.state.inhire
+                        await inhire.send_email([job_talent_id], subject, body)
+                        logger.info(
+                            "Notificação de avanço de etapa enviada para %s (%s → %s)",
+                            talent_email, job_name, stage,
+                        )
+            except Exception as e:
+                logger.warning("Erro ao notificar candidato sobre mudança de etapa: %s", e)
+
     except Exception as e:
         logger.exception("Erro ao processar stage change: %s", e)
 
 
-async def _celebrate_hire(app, talent_name: str, job_name: str, job_id: str):
+async def _celebrate_hire(app, talent_name: str, job_name: str, job_id: str, job_talent_id: str = ""):
     """Send hiring celebration message to the recruiter who owns the job."""
     try:
         slack = app.state.slack
@@ -142,36 +195,60 @@ async def _celebrate_hire(app, talent_name: str, job_name: str, job_id: str):
                 target_user = user
                 break
 
+        recruiter_channel = None
+
         if not target_user:
             # Fallback: notify any conversation tracking this job
             for conv in conversations._conversations.values():
                 if conv.get_context("current_job_id") == job_id:
+                    recruiter_channel = conv.channel_id
                     await slack.send_message(
-                        conv.channel_id,
+                        recruiter_channel,
                         f"🎉 *Contratação!* *{talent_name}* fechou na vaga de *{job_name}*! "
                         f"Parabéns! Quer que eu feche a vaga ou ainda tem posições abertas?",
                     )
-                    return
-            logger.info("Contratação detectada mas recrutador não encontrado: %s em %s", talent_name, job_name)
-            return
+                    break
+            if not recruiter_channel:
+                logger.info("Contratação detectada mas recrutador não encontrado: %s em %s", talent_name, job_name)
+                return
+        else:
+            # Open DM with the recruiter
+            dm_resp = await slack.client.conversations_open(users=target_user["slack_user_id"])
+            recruiter_channel = dm_resp["channel"]["id"]
 
-        # Open DM with the recruiter
-        dm_resp = await slack.client.conversations_open(users=target_user["slack_user_id"])
-        channel_id = dm_resp["channel"]["id"]
+            text = (
+                f"🎉 *Contratação!* *{talent_name}* fechou na vaga de *{job_name}*! "
+                f"Parabéns! Quer que eu feche a vaga ou ainda tem posições abertas?"
+            )
+            await slack.send_message(recruiter_channel, text)
 
-        text = (
-            f"🎉 *Contratação!* *{talent_name}* fechou na vaga de *{job_name}*! "
-            f"Parabéns! Quer que eu feche a vaga ou ainda tem posições abertas?"
-        )
-        await slack.send_message(channel_id, text)
+            # Record in conversation history
+            conv = conversations.get_or_create(target_user["slack_user_id"], recruiter_channel)
+            conv.add_message("assistant", text)
+            conversations.save(conv)
 
-        # Record in conversation history
-        conv = conversations.get_or_create(target_user["slack_user_id"], channel_id)
-        conv.add_message("assistant", text)
-        conversations.save(conv)
+            logger.info("Comemoração de contratação enviada: %s em %s para %s",
+                         talent_name, job_name, recruiter_name)
 
-        logger.info("Comemoração de contratação enviada: %s em %s para %s",
-                     talent_name, job_name, recruiter_name)
+        # Task 11 — check remaining active candidates and prompt devolutiva
+        try:
+            all_candidates = await inhire.list_job_talents(job_id)
+            active_remaining = [
+                c for c in all_candidates
+                if c.get("status") not in ("rejected", "dropped", "hired")
+                and c.get("id") != job_talent_id
+            ]
+
+            if active_remaining and recruiter_channel:
+                count = len(active_remaining)
+                await slack.send_message(
+                    recruiter_channel,
+                    f"📋 A vaga *{job_name}* ainda tem *{count} candidato(s)* no processo.\n"
+                    f"Quer que eu envie devolutiva profissional para todos? "
+                    f"Basta dizer: *reprova os candidatos da vaga*",
+                )
+        except Exception as e:
+            logger.warning("Erro ao verificar candidatos remanescentes: %s", e)
 
     except Exception as e:
         logger.exception("Erro na comemoração de contratação: %s", e)
