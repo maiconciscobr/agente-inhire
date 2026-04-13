@@ -2,7 +2,7 @@ import json
 import logging
 
 from services.conversation import FlowState
-from routers.handlers.helpers import _send, _send_approval
+from routers.handlers.helpers import _send, _send_approval, _talent_phone
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -446,10 +446,32 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
             f"*Candidato:* {candidate_name}\n"
             f"*Vaga:* {job_name}\n"
             f"*Data:* {dt_readable}\n"
-            f"*ID:* `{appt_id}`\n\n"
-            f"O agendamento foi registrado no InHire. "
-            f"Lembre de enviar o convite com o link da reunião ao candidato.",
+            f"*ID:* `{appt_id}`",
         )
+
+        # Offer WhatsApp confirmation
+        phone = _talent_phone(candidate)
+        user_data = app.state.user_mapping.get_user(conv.user_id) or {}
+        if phone and user_data.get("comms_enabled", True):
+            claude = app.state.claude
+            msg_text = await claude.generate_whatsapp_message(
+                intent=f"Confirmar entrevista agendada para {dt_readable}",
+                candidate_name=candidate_name,
+                job_name=job_name,
+            )
+            conv.set_context("whatsapp_interview_pending", {
+                "phone": phone,
+                "message": msg_text,
+                "candidate_name": candidate_name,
+            })
+            await _send_approval(
+                conv, slack, channel_id,
+                title="Confirmar por WhatsApp?",
+                details=f"📱 *Para:* {candidate_name}\n\n{msg_text}",
+                callback_id="whatsapp_interview_approval",
+            )
+            return
+
         conv.state = FlowState.IDLE
 
     except Exception as e:

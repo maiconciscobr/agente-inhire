@@ -1,7 +1,7 @@
 import logging
 
 from services.conversation import FlowState
-from routers.handlers.helpers import _send, _send_approval, _suggest_next_action
+from routers.handlers.helpers import _send, _send_approval, _suggest_next_action, _talent_phone
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -280,4 +280,24 @@ async def _reject_candidates(conv, app, channel_id: str):
         f"> {rejection_msg[:300]}"
         + tip,
     )
+
+    # Offer WhatsApp devolutiva if comms enabled and candidates have phone
+    user_data = app.state.user_mapping.get_user(conv.user_id) or {}
+    if user_data.get("comms_enabled", True):
+        with_phone = []
+        for c in to_reject:
+            phone = _talent_phone(c)
+            if phone:
+                c_name = (c.get("talent") or {}).get("name") or c.get("talentName") or "Sem nome"
+                with_phone.append({"phone": phone, "candidate_name": c_name, "message": rejection_msg})
+        if with_phone:
+            conv.set_context("whatsapp_rejection_pending", with_phone)
+            await _send_approval(
+                conv, slack, channel_id,
+                title="Enviar devolutiva por WhatsApp?",
+                details=f"{len(with_phone)} candidato(s) com telefone.\nMensagem:\n> {rejection_msg[:200]}",
+                callback_id="whatsapp_rejection_approval",
+            )
+            return
+
     conv.state = FlowState.IDLE
