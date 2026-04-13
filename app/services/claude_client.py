@@ -748,6 +748,30 @@ Retorne apenas o texto da mensagem, sem aspas."""
         valid = {"overqualified", "underqualified", "location", "other"}
         return reason if reason in valid else "other"
 
+    async def generate_personalized_rejection(
+        self, candidate_name: str, stage_reached: str, strengths: str, job_name: str,
+    ) -> str:
+        """Generate a personalized rejection message for a specific candidate."""
+        system = "Você gera devolutivas de processos seletivos. Seja empático e específico."
+        user_content = (
+            f"Candidato: {candidate_name}\n"
+            f"Vaga: {job_name}\n"
+            f"Etapa alcançada: {stage_reached}\n"
+            f"Pontos fortes observados: {strengths}\n\n"
+            "Gere uma devolutiva profissional e empática em 3-4 linhas.\n"
+            "Seja específico — mencione a etapa que alcançou e pelo menos um ponto positivo.\n"
+            "Tom: respeitoso, encorajador, sem clichês."
+        )
+        t0 = time.monotonic()
+        resp = await self.client.messages.create(
+            model=self.fast_model,
+            max_tokens=300,
+            system=[{"type": "text", "text": system}],
+            messages=[{"role": "user", "content": user_content}],
+        )
+        self._log_usage("generate_personalized_rejection", resp, int((time.monotonic() - t0) * 1000))
+        return resp.content[0].text.strip()
+
     async def generate_whatsapp_message(self, intent: str, candidate_name: str,
                                          job_name: str = "", context: str = "") -> str:
         """Generate a professional WhatsApp message for a candidate."""

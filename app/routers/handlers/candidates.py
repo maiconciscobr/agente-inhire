@@ -329,8 +329,13 @@ async def _reject_candidates(conv, app, channel_id: str):
         for c in to_reject:
             phone = _talent_phone(c)
             if phone:
-                c_name = (c.get("talent") or {}).get("name") or c.get("talentName") or "Sem nome"
-                with_phone.append({"phone": phone, "candidate_name": c_name, "message": rejection_msg})
+                c_name = c.get("name", "") or (c.get("talent") or {}).get("name") or c.get("talentName") or "Sem nome"
+                c_stage = c.get("stage", "")
+                c_score = str(c.get("score", ""))
+                personalized_msg = await claude.generate_personalized_rejection(
+                    c_name, c_stage, f"Score: {c_score}", job_name,
+                )
+                with_phone.append({"phone": phone, "candidate_name": c_name, "message": personalized_msg})
         if with_phone:
             conv.set_context("whatsapp_rejection_pending", with_phone)
             await _send_approval(
