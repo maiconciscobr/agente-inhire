@@ -160,6 +160,13 @@ class InHireClient:
                     logger.error("Erro ao reprovar %s: %s", jt_id, e)
             return {"rejected": rejected, "total": len(job_talent_ids)}
 
+    async def get_reproval_suggestion(self, job_talent_id: str) -> dict | None:
+        """Get AI-generated reproval email suggestion from InHire."""
+        try:
+            return await self._request("POST", f"/job-talents/reproval/suggestion/{job_talent_id}")
+        except Exception:
+            return None
+
     # --- Scorecards ---
     async def get_scorecards(self, params: dict | None = None) -> list:
         return await self._request("GET", "/scorecards", params=params or {})
@@ -231,6 +238,19 @@ class InHireClient:
             if e.response.status_code == 404:
                 return None
             raise
+
+    async def get_talents_by_ids(self, talent_ids: list[str]) -> list[dict]:
+        """Fetch multiple talents by their IDs in a single request."""
+        if not talent_ids:
+            return []
+        return await self._request("POST", "/talents/ids", json={"ids": talent_ids})
+
+    async def list_talents_paginated(self, limit: int = 50, start_key: str | None = None) -> dict:
+        """List talents with pagination. Returns {results, startKey}."""
+        payload: dict = {"limit": limit}
+        if start_key:
+            payload["startKey"] = start_key
+        return await self._request("POST", "/talents/paginated", json=payload)
 
     # --- Appointments (base path: /job-talents/appointments) ---
     async def create_appointment(self, job_talent_id: str, payload: dict) -> dict:
