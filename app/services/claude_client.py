@@ -349,6 +349,7 @@ class ClaudeService:
     def __init__(self, settings: Settings):
         self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.model = settings.claude_model
+        self.fast_model = settings.claude_model_fast
 
     def _build_system(self, static: str, dynamic: str | None = None) -> list[dict]:
         """Build system prompt blocks with prompt caching on the static part.
@@ -443,9 +444,9 @@ class ClaudeService:
         )
         context = f"Tem info faltando: {'sim' if has_missing_info else 'não'}"
         resp = await self.client.messages.create(
-            model=self.model,
+            model=self.fast_model,
             max_tokens=20,
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            system=[{"type": "text", "text": system}],
             messages=[{"role": "user", "content": f"[{context}]\nRecrutador disse: {user_text}"}],
         )
         result = resp.content[0].text.strip().lower()
@@ -492,9 +493,9 @@ class ClaudeService:
         )
 
         resp = await self.client.messages.create(
-            model=self.model,
+            model=self.fast_model,
             max_tokens=300,
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            system=[{"type": "text", "text": system}],
             messages=[{"role": "user", "content": text}],
         )
 
@@ -502,7 +503,11 @@ class ClaudeService:
         raw = resp.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
-        return json_mod.loads(raw)
+        try:
+            return json_mod.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Haiku retornou JSON invalido em parse_routine_request: %s", raw[:200])
+            return {"action": "list"}
 
     async def extract_job_data(self, briefing: str) -> dict:
         """Extract structured job data from a free-form briefing. Returns parsed dict."""
