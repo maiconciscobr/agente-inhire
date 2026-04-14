@@ -352,6 +352,20 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "configurar_vaga",
+        "description": "Configura triagem IA, formulário e scorecard de uma vaga já criada",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "UUID da vaga"},
+                "setup_screening": {"type": "boolean", "description": "Configurar triagem IA com critérios do briefing"},
+                "setup_form": {"type": "boolean", "description": "Configurar formulário de inscrição"},
+                "setup_scorecard": {"type": "boolean", "description": "Configurar scorecard de entrevista"},
+            },
+            "required": ["job_id"],
+        },
+    },
+    {
         "name": "comparar_vagas",
         "description": "Compara performance de vagas abertas (SLA, candidatos, velocidade)",
         "input_schema": {

@@ -900,6 +900,14 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "gerenciar_rotina":
         await _handle_routine(conv, app, channel_id, conv.user_id, tool_input)
 
+    elif tool == "configurar_vaga":
+        job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+        if job_id:
+            from routers.handlers.job_creation import _auto_configure_job
+            await _auto_configure_job(conv, request.app, channel_id, job_id)
+        else:
+            await slack.post_message(channel_id, "Preciso saber qual vaga configurar. Me passe o ID.")
+
     elif tool == "conversa_livre":
         # Use text from detect_intent if available, avoid double-call
         direct_text = result.get("text", "")

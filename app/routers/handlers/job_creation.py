@@ -67,3 +67,82 @@ async def _generate_and_post_draft(conv, app, channel_id, job_data):
         details=f"```\n{job_description[:2900]}\n```",
         callback_id="job_draft_approval",
     )
+
+
+async def _auto_configure_job(conv, app, channel_id: str, job_id: str):
+    """Auto-configure screening and scorecard after job creation."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_data = conv.get_context("job_data", {})
+    job_name = conv.get_context("current_job_name", "")
+
+    configured = []
+
+    # 1. Configure AI screening from briefing requirements
+    try:
+        requirements = job_data.get("requirements", [])
+        salary_min = job_data.get("salary_range", {}).get("min") if isinstance(job_data.get("salary_range"), dict) else job_data.get("salaryMin")
+        salary_max = job_data.get("salary_range", {}).get("max") if isinstance(job_data.get("salary_range"), dict) else job_data.get("salaryMax")
+
+        if requirements:
+            statements = []
+            for req in requirements:
+                if isinstance(req, str):
+                    statements.append({"statement": req, "weight": 3})
+                elif isinstance(req, dict):
+                    name = req.get("name", req.get("skill", ""))
+                    weight_map = {"essential": 5, "important": 3, "nice_to_have": 1}
+                    w = weight_map.get(req.get("weight", "important"), 3)
+                    if name:
+                        statements.append({"statement": name, "weight": w})
+
+            screening_settings = {
+                "active": True,
+                "activeScreeningCriteria": ["resumeAnalysis"],
+            }
+
+            if salary_min or salary_max:
+                screening_settings["activeScreeningCriteria"].append("salary")
+                if salary_min:
+                    screening_settings["lowerSalary"] = salary_min
+                if salary_max:
+                    screening_settings["higherSalary"] = salary_max
+
+            resume_analyzer = {"active": True, "statements": statements} if statements else None
+
+            await inhire.configure_screening(job_id, screening_settings, resume_analyzer)
+            configured.append("triagem IA")
+    except Exception as e:
+        logger.warning("Erro ao configurar screening: %s", e)
+
+    # 2. Configure scorecard from requirements
+    try:
+        requirements = job_data.get("requirements", [])
+        if requirements:
+            technical_skills = []
+            for req in requirements:
+                name = req if isinstance(req, str) else req.get("name", req.get("skill", ""))
+                if name:
+                    technical_skills.append({"name": name})
+
+            categories = []
+            if technical_skills:
+                categories.append({"name": "Conhecimento Técnico", "skills": technical_skills[:10]})
+            categories.append({"name": "Comunicação e Fit Cultural", "skills": [
+                {"name": "Comunicação"},
+                {"name": "Fit cultural"},
+                {"name": "Motivação"},
+            ]})
+
+            await inhire.create_job_scorecard(job_id, categories)
+            configured.append("scorecard")
+    except Exception as e:
+        logger.warning("Erro ao configurar scorecard: %s", e)
+
+    if configured:
+        items = ", ".join(configured)
+        await _send(conv, slack, channel_id,
+                    f"⚙️ Configurei automaticamente: *{items}* para a vaga *{job_name}*.")
+
+    return configured
