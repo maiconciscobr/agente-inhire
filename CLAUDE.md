@@ -24,7 +24,7 @@ app/
 ├── config.py                  # Pydantic Settings via .env
 ├── services/
 │   ├── inhire_auth.py         # JWT auth com retry + auto-refresh + asyncio lock
-│   ├── inhire_client.py       # HTTP client para InHire API (~40 endpoints)
+│   ├── inhire_client.py       # HTTP client para InHire API (~55 endpoints)
 │   ├── slack_client.py        # Slack Web API (mensagens, botões, split de msgs longas)
 │   ├── claude_client.py       # Claude API (prompt caching, tool use, extração, JD, shortlist)
 │   ├── conversation.py        # Máquina de estados (FlowState) + persistência Redis (TTL 7d)
@@ -246,7 +246,21 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 48 | **Previsão de fechamento** — Haiku estima quando vaga fecha baseado em dados do funil | ✅ | 40 |
 | 49 | **Comparação de vagas** — tool `comparar_vagas`, ranking por velocidade (cand/dia) | ✅ | 40 |
 | 50 | **Relatório semanal** — cron seg 9:30 BRT, consolida todas as vagas ativas com SLA e risco | ✅ | 40 |
-| 51 | **Mapeamento de gaps** — spec completa em `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` | ✅ | 40 |
+| 51 | **Mapeamento de gaps** — 95 funcionalidades mapeadas, 15 endpoints descobertos no código-fonte InHire | ✅ | 40 |
+| 52 | **Config triagem IA pós-vaga** — `PATCH /jobs/{id}` com `screeningSettings` + `resumeAnalyzer` auto | ✅ | 41 |
+| 53 | **Config scorecard pós-vaga** — `POST /forms/scorecards/jobs` com skills do briefing | ✅ | 41 |
+| 54 | **Divulgação em portais** — `GET /integrations` + `POST /job-posts/pages` (LinkedIn, Indeed, Netvagas) | ✅ | 41 |
+| 55 | **Timeline do candidato** — `GET /job-talents/{id}/timeline` (histórico cronológico completo) | ✅ | 41 |
+| 56 | **Tempo médio por etapa** — calculado a partir do timeline no relatório de status | ✅ | 41 |
+| 57 | **Screening on-demand** — `POST /job-talents/{id}/screening/manual` (triagem pra hunting!) | ✅ | 41 |
+| 58 | **Análise de CV detalhada** — `GET /job-talents/{id}/resume-analysis` (score por critério + evidência) | ✅ | 41 |
+| 59 | **Automações de vaga** — `POST /workflows/automations` (CRUD: trigger + action + conditions) | ✅ | 41 |
+| 60 | **Tags em candidatos** — `POST /job-talents/tags/add/batch` + DELETE batch | ✅ | 41 |
+| 61 | **Memória hierárquica** — extract_facts (Haiku) + perfil recrutador + session summaries (Redis 4 níveis) | ✅ | 41 |
+| 62 | **Injeção de contexto hierárquica** — perfil + fatos + sessão anterior + insight semanal no system prompt | ✅ | 41 |
+| 63 | **TTLs em todas as keys Redis** — decisões 180d, users 365d, insights 10d, interaction 30d, threshold 90d | ✅ | 41 |
+| 64 | **Atomicidade Redis** — pipeline atômico no counter, `set(nx=True, ex=ttl)` nos alertas | ✅ | 41 |
+| 65 | **Limpeza de contexto** — `conv.context` limpa 18 keys ao trocar de vaga ativa | ✅ | 41 |
 
 ---
 

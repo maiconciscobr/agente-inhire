@@ -2460,15 +2460,91 @@ Comparação exaustiva com o Help Center revelou funcionalidades que não estava
 
 ### Top 5 endpoints pendentes pro André (InHire)
 
-1. `GET/PUT /jobs/{id}/application-form` — formulário de inscrição
-2. `POST /jobs/{id}/screening-config` — configurar triagem IA
-3. `POST /jobs/{id}/publish` — divulgação em portais
-4. `GET /job-talents/{jt}/history` — histórico de movimentação (base pra analytics)
-5. `POST /scorecards` + liberar GET — feedback de entrevistadores
+~~1. Formulário de inscrição~~ → ✅ Resolvido (`GET /forms/job-id/{jobId}` + `PATCH /forms/{formId}`)
+~~2. Triagem IA~~ → ✅ Resolvido (`PATCH /jobs/{id}` com `screeningSettings`)
+~~3. Divulgação~~ → ✅ Resolvido (`POST /job-posts/pages`)
+~~4. Histórico movimentação~~ → ✅ Resolvido (`GET /job-talents/{id}/timeline`)
+~~5. Scorecards~~ → ✅ Resolvido (`GET/POST /forms/scorecards/jobs/{jobId}`)
+
+**Todos os 5 P1 resolvidos — endpoints já existiam no código-fonte, nunca precisaram ser criados.**
 
 ### Estado do projeto
 
-- **40 sessões**, 51 melhorias arquiteturais
-- **15 tools** funcionais (novo: `comparar_vagas`)
-- **~40 endpoints** da API InHire implementados no client
-- **95 funcionalidades mapeadas** (vs 73 antes): 33 funcionais, 8 parciais, 27 precisam endpoint, 22 UI, 5 módulo externo
+- **41 sessões**, 65 melhorias arquiteturais
+- **17 tools** funcionais (novos: `comparar_vagas`, `configurar_vaga`, `divulgar_vaga`)
+- **~55 endpoints** da API InHire implementados no client
+- **95 funcionalidades mapeadas**: 48 funcionais (51%), 8 parciais, 12 precisam endpoint, 22 UI, 5 módulo externo
+
+---
+
+## Sessão 41 — 2026-04-14 — Varredura do Código-Fonte InHire + Memória Hierárquica
+
+### Objetivo
+
+Varrer o monorepo do InHire (`inhire-workspace`) pra descobrir endpoints que existem mas não sabíamos, implementar os mais impactantes, e construir o sistema de memória hierárquica.
+
+### Varredura do monorepo InHire
+
+Escaneados 10+ serviços, ~500 rotas HTTP encontradas:
+- **forms:** 89 rotas (forms, scorecards, surveys, DISC, templates, IA)
+- **jobs:** 61 rotas (CRUD, templates, stages, screening settings)
+- **job-talents:** 114 rotas (candidatos, pipeline, appointments, WhatsApp, timeline!)
+- **workflows:** 9 rotas (automações CRUD + execuções)
+- **offer-letter:** 16 rotas (CRUD, templates, ClickSign webhook)
+- **comms:** 40+ rotas (email, tracking, templates, blocklist)
+- **integrations:** 20+ rotas (job boards, webhooks, Slack alerts)
+- **talents:** 30+ rotas (CRUD, SmartCV, diversidade, insights)
+- **search-talents:** 10+ rotas (Typesense keys, IA filters, sync)
+
+### Descobertas que mudaram o mapa
+
+15 endpoints que achávamos inexistentes já existiam:
+1. `GET /job-talents/{id}/timeline` — histórico completo!
+2. `POST /job-talents/{id}/screening/manual` — triagem sob demanda!
+3. `POST /workflows/automations` — automações via API!
+4. `POST /forms/` — criar formulário (não só PATCH)
+5. `POST /forms/ai/generate-subscription-form` — IA gera perguntas
+6. `POST /job-talents/tags/add/batch` — tags em candidatos
+7. `GET /offer-letters/templates/{id}` — template com variáveis
+8. `POST /jobs/stages` — pipeline customizado
+9. `GET /jobs/templates` — templates de vaga
+10. E mais 6 outros
+
+### Implementações (sessão 41)
+
+**Endpoints P1 do template do Iago:**
+- Config triagem IA pós-criação de vaga (screeningSettings + resumeAnalyzer)
+- Config scorecard automático a partir do briefing
+- Divulgação em portais (LinkedIn, Indeed, Netvagas)
+- Formulário de inscrição (GET + PATCH)
+
+**Endpoints descobertos no código-fonte:**
+- Timeline do candidato (tempo por etapa no relatório de status)
+- Screening on-demand (triagem pra hunting sem formulário)
+- Análise de CV detalhada (score por critério + evidência)
+- Automações de vaga (CRUD: trigger + action + conditions)
+- Tags em candidatos (batch add/remove)
+
+**Memória hierárquica (Fase 2):**
+- `extract_facts()` via Haiku — extrai fatos duradouros ao detectar sessão stale
+- `generate_recruiter_profile()` — perfil consolidado (mensal via KAIROS)
+- Session summaries — últimas 10 sessões em lista Redis (TTL 30d)
+- Injeção hierárquica: perfil + fatos + sessão anterior + insight semanal no system prompt
+- TTLs em TODAS as keys Redis (decisões 180d, users 365d, insights 10d, etc.)
+- Atomicidade corrigida (pipeline no counter, `set(nx=True)` nos alertas)
+- Limpeza de `conv.context` ao trocar de vaga (18 keys)
+
+### Decisões técnicas
+
+- **Acesso ao código-fonte InHire** como fonte de verdade (melhor que perguntar via Slack)
+- **Monorepo em `C:\Users\maico\OneDrive\Desktop\GitHub\inhire-workspace`**
+- **Template para André** funcionou — Iago preencheu 4 de 5 P1 com qualidade
+- **Haiku para extract_facts** — ~$0.001 por extração, máx 5 fatos por sessão
+- **4 níveis de memória:** mensagens (7d) → session summaries (30d) → fatos (90d) → perfil (permanente)
+
+### Deploy
+
+- ~15 arquivos deployados via SCP
+- Multiple restarts, todos OK
+- Health check: `{"status":"ok"}`
+- Cobertura: 35% → 51% das funcionalidades InHire
