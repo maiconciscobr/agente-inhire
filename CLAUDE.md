@@ -113,7 +113,9 @@ handlers = {
 | `GET /jobs` | Full table scan + N+1 query → **502 timeout** | `POST /jobs/paginated/lean` com `{"limit": N}` |
 | `GET /applications` | Retorna vazio para candidatos de hunting | `GET /job-talents/{jobId}/talents` |
 | `PATCH /applications/{id}` | Não aceita stageId, não funciona pra hunting | Ver endpoints corretos abaixo |
-| `GET /scorecards`, `GET /users`, `GET /team` | 403 — service account sem permissão | Sem alternativa |
+| `GET /scorecards` | 403 — service account sem ability `ScorecardJob` | `GET /forms/scorecards/jobs/{jobId}` funciona! André vai liberar ability |
+| `GET /users` (api.inhire.app) | 403 — rota no domínio errado | `GET https://auth.inhire.app/users` funciona (200) |
+| `GET /talents/{id}/files` | 404 — rota não existe | `POST /files/search` com `{id, fileCategory}` |
 
 ### Endpoints CORRETOS (confirmados com André, dev InHire)
 
@@ -141,6 +143,20 @@ handlers = {
 | Atualizar entrevista | `PATCH /job-talents/appointments/{id}/patch` |
 | URL documento oferta | `GET /offer-letters/document/{offerId}` |
 | Settings oferta | `GET /offer-letters/settings` |
+| Listar users InHire | `GET https://auth.inhire.app/users` (**domínio auth**, não api) |
+| Buscar arquivo por ID | `POST /files/search` com `{id, fileCategory}` |
+| Scorecard da vaga | `GET /forms/scorecards/jobs/{jobId}` |
+| Criar scorecard | `POST /forms/scorecards/jobs` com `{jobId, skillCategories}` |
+| Formulário da vaga | `GET /forms/job-id/{jobId}` |
+| Atualizar formulário | `PATCH /forms/{formId}` |
+| Divulgar vaga | `POST /job-posts/pages` com `{jobId, careerPageId, activeJobBoards}` |
+| Integrações disponíveis | `GET /integrations` |
+| Timeline do candidato | `GET /job-talents/{jobTalentId}/timeline` |
+| Screening manual | `POST /job-talents/{jobTalentId}/screening/manual` |
+| Análise de CV | `POST /job-talents/resume/analyze/{jobTalentId}` |
+| Criar automação | `POST /workflows/automations` |
+| Tags em batch | `POST /job-talents/tags/add/batch` |
+| Busca IA talentos | `POST /search-talents/ai/generate-job-talent-filter` |
 
 ### Bugs conhecidos da API
 

@@ -486,18 +486,28 @@ POST /files
 }
 ```
 
-**⚠️ Limitação:** Este endpoint cria apenas o metadata do arquivo. O upload do conteúdo binário parece usar S3 pre-signed URLs (endpoints `/files/{id}` retornam 403 com erro de autenticação S3, não JWT). **Pendente: perguntar ao Andre como enviar o binário e vincular ao talento.**
+**⚠️ Limitação:** Este endpoint cria apenas o metadata do arquivo.
 
-### Endpoints que retornam 403 (service account sem permissão)
+### Buscar arquivo (corrigido sessao 41)
 ```
-GET  /files/{id}                    → 403 (auth S3, não JWT)
-GET  /files/{id}/upload-url         → 403
-GET  /talents/{id}/files            → 403
-GET  /talents/{id}/resumes          → 403
-GET  /talents/{id}/attachments      → 403
-POST /talents/{id}/files            → 403
-POST /attachments                   → 403
+POST /files/search
 ```
+**Body:** `{"id": "uuid-do-arquivo", "fileCategory": "resumes"}`
+**Nota:** Exige `id` como key (DynamoDB). Nao busca por categoria sozinha.
+Andre confirmou: `GET /talents/{id}/files` nao existe (404, nao 403). Rota correta é esta.
+
+### Listar users InHire (corrigido sessao 41)
+```
+GET https://auth.inhire.app/users
+```
+**Dominio:** `auth.inhire.app`, NAO `api.inhire.app`. Retorna 200 com lista de users do tenant.
+O `GET /users` em `api.inhire.app` retorna 403 porque a rota nao existe nesse dominio.
+
+### Endpoints que realmente retornam 403
+```
+GET  /scorecards                    → 403 (ability ScorecardJob — Andre vai liberar)
+```
+**Nota (sessao 41):** Andre confirmou que a role `Teste ADM Math2` tem TODAS as permissoes na UI. Os demais 403 eram rotas erradas (dominio errado ou endpoint inexistente), nao falta de permissao. A alternativa funcional para scorecards é `GET /forms/scorecards/jobs/{jobId}` (testado, retorna dados).
 
 ---
 
@@ -568,10 +578,11 @@ GET /search-talents/security/key/talents?engine=typesense
 | Endpoint | Erro | Motivo |
 |---|---|---|
 | `GET /applications` | Retorna `[]` | Só tem candidatos orgânicos. Usar `/job-talents/{jobId}/talents` |
-| `GET /scorecards` | 403 | Service account sem permissão |
-| `GET /users` | 403 | Service account sem permissão |
-| `GET /team` | 403 | Service account sem permissão |
-| `GET /members` | 403 | Service account sem permissão |
+| `GET /scorecards` | 403 | Ability faltando. Alternativa: `GET /forms/scorecards/jobs/{jobId}` (funciona) |
+| `GET /users` (api.inhire.app) | 403 | **Dominio errado.** Usar `GET https://auth.inhire.app/users` (200) |
+| `GET /talents/{id}/files` | 404 | **Rota nao existe.** Usar `POST /files/search` com `{id}` |
+| `GET /team` | 403 | Nao investigado — pode ser dominio errado tambem |
+| `GET /members` | 403 | Nao investigado |
 | `GET /pipelines` | 403 | Não existe como endpoint separado. Stages vêm dentro de `GET /jobs/:id` |
 | `GET /stages` | 403 | Idem |
 

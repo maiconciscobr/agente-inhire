@@ -206,7 +206,7 @@ POST /scorecards
 }
 ```
 
-**ACAO IMEDIATA:** Liberar `GET /scorecards` para o service account (hoje 403).
+**Nota:** `GET /scorecards` (rota legada) retorna 403 mas `GET /forms/scorecards/jobs/{jobId}` funciona. Para avaliacao por candidato: `POST /forms/scorecards/jobTalent/{jt}/{interviewId}`.
 
 ---
 
@@ -369,11 +369,12 @@ POST /offer-letters/{offerId}/decline
 
 | Endpoint | Status | Impacto |
 |---|---|---|
-| `GET /scorecards` | 403 | Feedback de entrevistadores |
-| `GET /users` | 403 | Onboarding sem hack |
-| `GET /team` | 403 | Dados do time |
-| `GET /talents/{id}/files` | 403 | Acesso a CVs |
-| `GET /files/{id}` | 403 (auth S3) | Download de arquivos |
+| `GET /scorecards` | 403 | ~~Feedback~~ → usar `GET /forms/scorecards/jobs/{jobId}` (funciona!) |
+| ~~`GET /users`~~ | ~~403~~ | ✅ Rota correta: `GET https://auth.inhire.app/users` (200) |
+| ~~`GET /talents/{id}/files`~~ | ~~403~~ | ✅ Rota correta: `POST /files/search` com `{id, fileCategory}` |
+| ~~`GET /files/{id}`~~ | ~~403~~ | ✅ Mesmo que acima — busca via `/files/search` |
+
+> **Nota:** André confirmou que a role `Teste ADM Math2` tem TODAS as permissões. Os 403 eram rotas erradas, nao falta de permissao. Unica pendencia real: ability `ScorecardJob` no `GET /scorecards` (rota legada).
 
 ### P1 — ~~Criticos~~ RESOLVIDOS (descobertos no codigo-fonte)
 
