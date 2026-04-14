@@ -76,13 +76,18 @@ class ProactiveMonitor:
         except Exception:
             return False
 
-    def _mark_alerted(self, job_id: str, alert_type: str, extra: str = ""):
-        """Mark an alert as sent."""
+    def _mark_alerted(self, job_id: str, alert_type: str, extra: str = "", ttl: int = 0):
+        """Mark an alert as sent. Returns True if marked (was not set), False if already existed."""
         if self._redis:
             try:
-                self._redis.setex(self._alert_key(job_id, alert_type, extra), ALERT_TTL, "1")
+                actual_ttl = ttl or ALERT_TTL
+                return self._redis.set(
+                    self._alert_key(job_id, alert_type, extra),
+                    "1", ex=actual_ttl, nx=True,
+                ) is not None
             except Exception:
-                pass
+                return False
+        return False
 
     def _get_threshold(self, user_id: str, job_id: str, stage: str = "") -> int:
         """Get configurable stale threshold in days."""
@@ -112,8 +117,10 @@ class ProactiveMonitor:
         if self._redis:
             try:
                 key = f"{REDIS_PROACTIVE_COUNT_PREFIX}{slack_user_id}:{datetime.now(BRT).strftime('%Y-%m-%d')}"
-                self._redis.incr(key)
-                self._redis.expire(key, 86400)
+                pipe = self._redis.pipeline()
+                pipe.incr(key)
+                pipe.expire(key, 86400)
+                pipe.execute()
             except Exception:
                 pass
 
@@ -190,7 +197,7 @@ class ProactiveMonitor:
         if self._redis:
             try:
                 key = f"{REDIS_THRESHOLD_PREFIX}{user_id}:{job_id}:{stage}"
-                self._redis.set(key, str(days))
+                self._redis.setex(key, 86400 * 90, str(days))  # 90 days
             except Exception:
                 pass
 
@@ -230,8 +237,9 @@ class ProactiveMonitor:
         """Record that a recruiter interacted (called from slack.py on every DM)."""
         if self._redis:
             try:
-                self._redis.set(
+                self._redis.setex(
                     f"{REDIS_LAST_INTERACTION_PREFIX}{slack_user_id}",
+                    86400 * 30,  # 30 days
                     str(time.time()),
                 )
             except Exception:
@@ -877,11 +885,12 @@ class ProactiveMonitor:
             system=system,
         )
 
-        # Store in Redis (no expiry — refreshed weekly)
+        # Store in Redis with 10-day TTL (refreshed weekly, buffer for missed runs)
         if self._redis and insight.strip():
             try:
-                self._redis.set(
+                self._redis.setex(
                     f"{REDIS_INSIGHTS_PREFIX}{slack_user_id}",
+                    86400 * 10,  # 10 days
                     insight.strip(),
                 )
                 logger.info("Insight semanal gerado para %s: %s",
