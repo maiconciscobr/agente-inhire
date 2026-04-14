@@ -50,11 +50,37 @@ def _build_dynamic_context(conv, is_returning: bool = False) -> str | None:
     if shortlist:
         parts.append(f"Shortlist carregado com {len(shortlist)} candidatos")
 
-    # Weekly insight (mini KAIROS) — inject recruiter style if available
+    # Hierarchical memory injection (profile → facts → last session → insights)
     try:
+        import json as _json
         import redis as redis_lib
         from config import get_settings
         r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+
+        # Level 4: Recruiter profile (permanent)
+        profile = r.get(f"inhire:profile:{conv.user_id}")
+        if profile:
+            parts.append(f"PERFIL DO RECRUTADOR:\n{profile}")
+
+        # Level 3: Accumulated facts (90-day TTL)
+        facts_raw = r.get(f"inhire:facts:{conv.user_id}")
+        if facts_raw:
+            try:
+                facts = _json.loads(facts_raw)
+                if isinstance(facts, list) and facts:
+                    facts_text = "\n".join(f"- {f}" for f in facts[:10])
+                    parts.append(f"FATOS APRENDIDOS:\n{facts_text}")
+            except Exception:
+                pass
+
+        # Level 2: Last session summary (only when returning, 30-day TTL)
+        # Stored as a Redis list (newest first) by ConversationManager.save_session_summary
+        if is_returning:
+            session_items = r.lrange(f"inhire:session_summary:{conv.user_id}", 0, 0)
+            if session_items:
+                parts.append(f"SESSÃO ANTERIOR:\n{session_items[0]}")
+
+        # Level 1: Weekly insight (mini KAIROS) — recruiter style patterns
         insight = r.get(f"inhire:insights:{conv.user_id}")
         if insight:
             parts.append(f"ESTILO DO RECRUTADOR (padrões aprendidos):\n{insight}")

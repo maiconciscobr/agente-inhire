@@ -12,6 +12,11 @@ logger = logging.getLogger("agente-inhire.conversation")
 
 REDIS_PREFIX = "inhire:conv:"
 REDIS_TTL = 86400 * 7  # 7 days
+REDIS_FACTS_PREFIX = "inhire:facts:"
+REDIS_FACTS_TTL = 86400 * 90  # 90 days
+REDIS_PROFILE_PREFIX = "inhire:profile:"
+REDIS_SESSION_SUMMARY_PREFIX = "inhire:session_summary:"
+REDIS_SESSION_SUMMARY_TTL = 86400 * 30  # 30 days
 
 
 class FlowState(str, Enum):
@@ -179,6 +184,79 @@ class ConversationManager:
             except Exception as e:
                 logger.warning("Erro ao salvar no Redis: %s", e)
 
+    def save_facts(self, user_id: str, facts: list[str]):
+        """Save extracted facts for a user. Merges with existing, keeps last 20."""
+        if not self._redis or not facts:
+            return
+        try:
+            key = f"{REDIS_FACTS_PREFIX}{user_id}"
+            existing = self._redis.get(key)
+            all_facts = json.loads(existing) if existing else []
+            all_facts.extend(facts)
+            # Deduplicate and keep last 20
+            seen = set()
+            unique = []
+            for f in reversed(all_facts):
+                if f.lower() not in seen:
+                    seen.add(f.lower())
+                    unique.append(f)
+            unique = list(reversed(unique[:20]))
+            self._redis.setex(key, REDIS_FACTS_TTL, json.dumps(unique))
+        except Exception as e:
+            logger.warning("Erro ao salvar fatos: %s", e)
+
+    def get_facts(self, user_id: str) -> list[str]:
+        """Get accumulated facts for a user."""
+        if not self._redis:
+            return []
+        try:
+            key = f"{REDIS_FACTS_PREFIX}{user_id}"
+            data = self._redis.get(key)
+            return json.loads(data) if data else []
+        except Exception:
+            return []
+
+    def save_profile(self, user_id: str, profile: str):
+        """Save recruiter profile (no TTL — permanent, refreshed monthly)."""
+        if not self._redis or not profile:
+            return
+        try:
+            self._redis.set(f"{REDIS_PROFILE_PREFIX}{user_id}", profile)
+        except Exception as e:
+            logger.warning("Erro ao salvar perfil: %s", e)
+
+    def get_profile(self, user_id: str) -> str:
+        """Get recruiter profile."""
+        if not self._redis:
+            return ""
+        try:
+            return self._redis.get(f"{REDIS_PROFILE_PREFIX}{user_id}") or ""
+        except Exception:
+            return ""
+
+    def save_session_summary(self, user_id: str, summary: str):
+        """Save session summary. Keeps last 10 sessions."""
+        if not self._redis or not summary:
+            return
+        try:
+            key = f"{REDIS_SESSION_SUMMARY_PREFIX}{user_id}"
+            self._redis.lpush(key, summary)
+            self._redis.ltrim(key, 0, 9)  # Keep last 10
+            self._redis.expire(key, REDIS_SESSION_SUMMARY_TTL)
+        except Exception as e:
+            logger.warning("Erro ao salvar resumo de sessão: %s", e)
+
+    def get_last_session_summary(self, user_id: str) -> str:
+        """Get most recent session summary."""
+        if not self._redis:
+            return ""
+        try:
+            key = f"{REDIS_SESSION_SUMMARY_PREFIX}{user_id}"
+            items = self._redis.lrange(key, 0, 0)
+            return items[0] if items else ""
+        except Exception:
+            return ""
+
     def reset(self, user_id: str, channel_id: str):
         key = self._key(user_id, channel_id)
         if key in self._conversations:
@@ -191,3 +269,4 @@ class ConversationManager:
                 self._redis.delete(f"{REDIS_PREFIX}{key}")
             except Exception:
                 pass
+
