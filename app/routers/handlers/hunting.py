@@ -1,6 +1,8 @@
 import json
 import logging
+import re
 import time
+from urllib.parse import urlparse
 
 from routers.handlers.helpers import _send, _send_approval, _suggest_next_action
 
@@ -391,3 +393,189 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
     except Exception as e:
         logger.exception("Erro ao gerar relatório: %s", e)
         await _send(conv, slack, channel_id, f"❌ Erro: {e}")
+
+
+async def _smart_match(conv, app, channel_id: str, tool_input: dict):
+    """Smart match: find talents in InHire pool using AI-powered search + screening."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+    talent_search = app.state.talent_search
+
+    job_id = conv.get_context("current_job_id")
+    job_name = conv.get_context("current_job_name", "")
+    job_data = conv.get_context("job_data", {})
+
+    if not job_id:
+        await _send(conv, slack, channel_id, "Preciso saber a vaga pra buscar. Me diz qual vaga ou crie uma primeiro.")
+        return
+
+    max_results = tool_input.get("max_results", 15)
+    extra_query = tool_input.get("query", "")
+
+    # Build search query from job data + recruiter input
+    query_parts = []
+    if job_name:
+        query_parts.append(job_name)
+    if job_data.get("requirements"):
+        reqs = job_data["requirements"]
+        if isinstance(reqs, list):
+            query_parts.append(" ".join(reqs[:5]))
+        elif isinstance(reqs, str):
+            query_parts.append(reqs[:200])
+    if extra_query:
+        query_parts.append(extra_query)
+
+    query = " ".join(query_parts).strip()
+    if not query:
+        query = job_name or "candidato"
+
+    await _send(conv, slack, channel_id, f"Buscando talentos compatíveis com *{job_name}*... 🎯")
+
+    # Rate limit: 5 searches per hour per user
+    try:
+        import redis as redis_lib
+        from config import get_settings
+        r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+        rate_key = f"inhire:smart_match_rate:{conv.user_id}"
+        count = r.incr(rate_key)
+        if count == 1:
+            r.expire(rate_key, 3600)
+        if count > 5:
+            await _send(conv, slack, channel_id, "Muitas buscas seguidas — espera um pouco e tenta de novo. 🕐")
+            return
+    except Exception:
+        pass  # Rate limit is best-effort
+
+    # Try AI-powered search first, fallback to direct Typesense
+    hits = []
+    try:
+        ai_filter = await inhire.gen_filter_job_talents(job_id, query)
+        if ai_filter and ai_filter.get("query"):
+            search_query = ai_filter["query"]
+            results = await talent_search.search(search_query, max_results=max_results)
+            hits = results.get("hits", [])
+    except Exception as e:
+        logger.warning("AI search failed, falling back to direct search: %s", e)
+
+    # Fallback: direct Typesense search
+    if not hits:
+        try:
+            results = await talent_search.search(query, max_results=max_results)
+            hits = results.get("hits", [])
+        except Exception as e:
+            logger.exception("Talent search failed: %s", e)
+            await _send(conv, slack, channel_id, "Ops, deu ruim na busca. Tenta de novo daqui a pouco? 🤔")
+            return
+
+    if not hits:
+        await _send(
+            conv, slack, channel_id,
+            f"Não achei ninguém compatível com *{job_name}* no banco de talentos. "
+            "Quer que eu gere uma busca LinkedIn pra hunting externo?",
+        )
+        return
+
+    # Load existing candidates to avoid duplicates
+    existing_talents = await inhire.list_job_talents(job_id)
+    existing_talent_ids = {c.get("talentId", "") for c in existing_talents}
+
+    # Process each hit: add to job + tag + screen
+    added = []
+    already_linked = []
+    failed = []
+
+    for hit in hits:
+        talent_id = hit.get("id", "")
+        name = hit.get("name", "Sem nome")
+
+        if not talent_id:
+            continue
+
+        if talent_id in existing_talent_ids:
+            already_linked.append({"name": name, "talent_id": talent_id, **hit})
+            continue
+
+        try:
+            resp = await inhire.add_existing_talent_to_job(job_id, talent_id, source="smart-match")
+            jt_id = resp.get("id", f"{job_id}*{talent_id}")
+            added.append({"name": name, "talent_id": talent_id, "jt_id": jt_id, **hit})
+            existing_talent_ids.add(talent_id)
+        except Exception as e:
+            logger.warning("Failed to add talent %s to job: %s", talent_id, e)
+            failed.append(name)
+
+    # Tag new candidates
+    new_jt_ids = [a["jt_id"] for a in added if a.get("jt_id")]
+    if new_jt_ids:
+        try:
+            await inhire.add_tags_batch(new_jt_ids, ["smart-match"])
+        except Exception as e:
+            logger.warning("Failed to tag smart-match candidates: %s", e)
+
+    # Trigger screening for new candidates
+    scores = {}
+    for a in added:
+        jt_id = a.get("jt_id", "")
+        if jt_id:
+            try:
+                result = await inhire.manual_screening(jt_id)
+                if result:
+                    score = result.get("score", result.get("screening", {}).get("score"))
+                    if score is not None:
+                        scores[jt_id] = score
+            except Exception:
+                pass
+            if jt_id not in scores:
+                try:
+                    result = await inhire.analyze_resume(jt_id)
+                    if result and result.get("analysis", {}).get("result"):
+                        analysis = result["analysis"]["result"]
+                        total_score = sum(r.get("score", 0) * r.get("weight", 1) for r in analysis)
+                        total_weight = sum(r.get("weight", 1) for r in analysis)
+                        if total_weight > 0:
+                            scores[jt_id] = round(total_score / total_weight, 1)
+                except Exception:
+                    pass
+
+    # Build ranked message
+    all_results = []
+    for a in added:
+        all_results.append({**a, "score": scores.get(a.get("jt_id", ""), None), "status": "novo"})
+    for a in already_linked:
+        all_results.append({**a, "score": None, "status": "ja_vinculado"})
+
+    # Sort: scored first (desc), then unscored
+    all_results.sort(key=lambda x: (x["score"] is not None, x["score"] or 0), reverse=True)
+
+    msg = f"🎯 *Smart Match — {job_name}*\n\n"
+    msg += f"Busquei no banco de talentos. *{len(added)} novos* vinculados, *{len(already_linked)} já estavam*.\n\n"
+
+    for i, r in enumerate(all_results[:15], 1):
+        emoji = "🏆" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"*{i}.*"
+        name = r.get("name", "Sem nome")
+        headline = r.get("headline", "")
+        location = r.get("location", "")
+        linkedin = r.get("linkedin", "")
+        score = r.get("score")
+        status = r.get("status")
+
+        score_str = f" — Score {score}/4.0" if score is not None else ""
+        status_str = " _(já vinculado)_" if status == "ja_vinculado" else ""
+
+        msg += f"{emoji} *{name}*{score_str}{status_str}\n"
+        parts = []
+        if headline:
+            parts.append(headline[:80])
+        if location:
+            parts.append(f"📍 {location}")
+        if linkedin:
+            parts.append(f"🔗 linkedin.com/in/{linkedin}")
+        if parts:
+            msg += "   " + " | ".join(parts) + "\n"
+        msg += "\n"
+
+    if failed:
+        msg += f"⚠️ {len(failed)} não consegui adicionar.\n"
+
+    msg += "Quer que eu analise algum em detalhe ou gere uma abordagem?"
+    await _send(conv, slack, channel_id, msg)
