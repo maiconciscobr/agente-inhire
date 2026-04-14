@@ -254,6 +254,19 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
         if is_returning:
             logger.info("Recruiter %s returning after inactivity", user_id)
 
+        # Extract facts before compressing stale session
+        if conv.is_stale() and conv.messages and len(conv.messages) >= 4:
+            try:
+                facts = await claude.extract_facts(conv.messages)
+                if facts:
+                    conversations.save_facts(user_id, facts)
+                    logger.info("Extracted %d facts for %s", len(facts), user_id)
+                # Save session summary
+                if conv.summary:
+                    conversations.save_session_summary(user_id, conv.summary)
+            except Exception as e:
+                logger.warning("Erro ao extrair fatos da sessão: %s", e)
+
         # Resume stale conversation with compressed summary
         if conv.is_stale() and conv.summary:
             logger.info("Resuming stale conversation for %s with summary", user_id)

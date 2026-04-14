@@ -541,6 +541,63 @@ class ClaudeService:
             system=system,
         )
 
+    async def extract_facts(self, messages: list[dict]) -> list[str]:
+        """Extract durable facts from a conversation session (preferences, criteria, decisions).
+        Uses Haiku for cost efficiency (~$0.001 per extraction)."""
+        if not messages or len(messages) < 4:
+            return []
+
+        # Take last 30 messages max
+        recent = messages[-30:]
+        msgs_text = "\n".join(f"{m['role']}: {m['content'][:200]}" for m in recent)
+
+        try:
+            resp = await self.client.messages.create(
+                model=self.fast_model,
+                max_tokens=300,
+                system=[{"type": "text", "text": (
+                    "Extraia fatos duradouros desta conversa de recrutamento. "
+                    "Fatos = preferências, critérios recorrentes, decisões importantes, padrões do recrutador. "
+                    "NÃO inclua: dados temporários, saudações, erros. "
+                    "Retorne uma lista com no máximo 5 fatos, um por linha, sem bullets. "
+                    "Se não houver fatos relevantes, retorne VAZIO."
+                )}],
+                messages=[{"role": "user", "content": msgs_text}],
+            )
+            text = resp.content[0].text.strip()
+            if not text or text.upper() == "VAZIO":
+                return []
+            return [f.strip() for f in text.split("\n") if f.strip()][:5]
+        except Exception as e:
+            logger.warning("Erro ao extrair fatos: %s", e)
+            return []
+
+    async def generate_recruiter_profile(self, facts: list[str], patterns: str, decisions_summary: str) -> str:
+        """Generate a concise recruiter profile from accumulated facts and patterns.
+        Uses Haiku. Called monthly by KAIROS consolidation."""
+        context = f"Fatos acumulados:\n" + "\n".join(f"- {f}" for f in facts)
+        if patterns:
+            context += f"\n\nPadrões semanais:\n{patterns}"
+        if decisions_summary:
+            context += f"\n\nResumo de decisões:\n{decisions_summary}"
+
+        try:
+            resp = await self.client.messages.create(
+                model=self.fast_model,
+                max_tokens=200,
+                system=[{"type": "text", "text": (
+                    "Gere um perfil conciso do recrutador em 3-4 linhas. "
+                    "Inclua: experiência, foco (tipo de vaga), critérios mais valorizados, "
+                    "padrões de comportamento, preferências de comunicação. "
+                    "Seja objetivo e direto."
+                )}],
+                messages=[{"role": "user", "content": context}],
+            )
+            return resp.content[0].text.strip()
+        except Exception as e:
+            logger.warning("Erro ao gerar perfil: %s", e)
+            return ""
+
     async def classify_briefing_reply(self, user_text: str, has_missing_info: bool) -> str:
         """Classify user reply during briefing collection.
 
