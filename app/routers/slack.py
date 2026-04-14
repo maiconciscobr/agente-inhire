@@ -900,6 +900,14 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "gerenciar_rotina":
         await _handle_routine(conv, app, channel_id, conv.user_id, tool_input)
 
+    elif tool == "divulgar_vaga":
+        job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+        if job_id:
+            from routers.handlers.job_creation import _publish_job
+            await _publish_job(conv, request.app, channel_id, job_id)
+        else:
+            await slack.post_message(channel_id, "Qual vaga você quer divulgar?")
+
     elif tool == "configurar_vaga":
         job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
         if job_id:
@@ -1487,6 +1495,36 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
             elif action_id in ("adjust", "reject"):
                 conv.state = FlowState.IDLE
                 await _send(conv, slack, channel_id, "Ok, carta oferta cancelada.")
+
+        # --- Publish job approval ---
+        elif callback_id == "publish_job_approval":
+            if action_id == "approve":
+                job_id = conv.get_context("publish_job_id")
+                boards = conv.get_context("publish_boards", [])
+                career_page_id = conv.get_context("publish_career_page_id", "")
+                job_name = conv.get_context("current_job_name", "")
+
+                if job_id and career_page_id:
+                    try:
+                        result = await inhire.publish_job(
+                            job_id=job_id,
+                            career_page_id=career_page_id,
+                            display_name=job_name,
+                            active_job_boards=boards,
+                        )
+                        published = result.get("activeJobBoards", boards)
+                        channels = ", ".join(b.capitalize() for b in published) if published else "Página de carreiras"
+                        await slack.post_message(channel_id,
+                            f"✅ Vaga *{job_name}* publicada em: {channels}!")
+                    except Exception as e:
+                        logger.exception("Erro ao publicar vaga: %s", e)
+                        await slack.post_message(channel_id, f"❌ Erro ao publicar: {e}")
+                else:
+                    await slack.post_message(channel_id,
+                        "Não consegui publicar — dados de divulgação não encontrados.")
+            else:
+                await slack.post_message(channel_id, "Ok, vaga não publicada.")
+            conv.state = FlowState.IDLE
 
         # --- Add analyzed profile to job ---
         elif callback_id == "add_analyzed_profile":

@@ -352,6 +352,16 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "divulgar_vaga",
+        "description": "Publica a vaga em portais de emprego (LinkedIn, Indeed, Netvagas, etc.)",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "UUID da vaga"},
+            },
+        },
+    },
+    {
         "name": "configurar_vaga",
         "description": "Configura triagem IA, formulário e scorecard de uma vaga já criada",
         "input_schema": {
