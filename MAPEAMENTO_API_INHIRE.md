@@ -1,6 +1,6 @@
 # Mapeamento Completo da API InHire
 
-**Gerado em:** 31 de março de 2026 | **Atualizado em:** 1 de abril de 2026
+**Gerado em:** 31 de marco de 2026 | **Atualizado em:** 14 de abril de 2026 (sessao 40)
 **Método:** Testes diretos via curl + Help Center + informações dos devs (Andre e Marcelo)
 **Tenant de teste:** demo
 **Service account:** Agente IA (role: Teste ADM Math2)
@@ -150,14 +150,21 @@ Mesmo auth, aceita array de talentos.
 ## 4. Talents (Banco de Talentos)
 
 ```
-GET  /talents          → lista todos os talentos do tenant (cuidado: resposta grande)
-GET  /talents/:id      → detalhes de um talento (name, email, linkedinUsername, location, phone, headline)
-POST /talents          → criar talento no banco (required: name)
+GET  /talents              → lista todos os talentos do tenant (cuidado: resposta grande)
+GET  /talents/:id          → detalhes de um talento
+POST /talents              → criar talento no banco (required: name)
+GET  /talents/email/{email}     → buscar talento por email exato (404 se nao existe)
+GET  /talents/linkedin/{username} → buscar talento por username LinkedIn (404 se nao existe)
+GET  /talents/name/{name}       → buscar talentos por nome (busca parcial)
+POST /talents/ids               → buscar multiplos talentos por IDs: {"ids": ["id1", "id2"]}
+POST /talents/paginated         → listar com paginacao: {"limit": 50, "startKey": "..."}
 ```
 
-**Campos aceitos no POST:** `name`, `email`, `phone`, `linkedinUsername`, `location`, `headline`
+**Campos aceitos no POST /talents:** `name`, `email`, `phone`, `linkedinUsername`, `location`, `headline`
 
 **Campos NÃO aceitos:** `jobId` (usar `/job-talents/{jobId}/talents` para vincular a vaga)
+
+**Endpoints implementados no agente (sessao 40):** `email`, `linkedin`, `ids`, `paginated`
 
 ---
 
@@ -206,13 +213,15 @@ POST /job-talents/appointments/{jobTalentId}/create
 
 ### Outros endpoints
 ```
-GET  /job-talents/appointments/{id}/get              → obter agendamento
-PATCH /job-talents/appointments/{id}/patch            → atualizar
-POST /job-talents/appointments/{id}/cancel            → cancelar
-GET  /job-talents/appointments/job-talent/{jt_id}     → listar agendamentos de um candidato
-GET  /job-talents/appointments/availability/check     → verificar disponibilidade
-GET  /job-talents/appointments/my-appointments        → agendamentos do recrutador logado
+GET   /job-talents/appointments/{id}/get              → obter agendamento
+PATCH /job-talents/appointments/{id}/patch            → atualizar (remarcar sem cancelar) ✅ sessao 40
+POST  /job-talents/appointments/{id}/cancel           → cancelar
+GET   /job-talents/appointments/job-talent/{jt_id}    → listar agendamentos de um candidato
+GET   /job-talents/appointments/availability/check    → verificar disponibilidade
+GET   /job-talents/appointments/my-appointments       → agendamentos do recrutador logado
 ```
+
+**Solucionado (sessao 33):** Usar `provider: "manual"` no payload para agendar sem integracao de calendario. Funciona sem que o service account tenha Google/Outlook configurado.
 
 **Nota:** O path original era `/appointments/*` — correto é `/job-talents/appointments/*`. O Andre confirmou que o serviço é o `job-talents-svc`.
 
@@ -492,7 +501,69 @@ POST /attachments                   → 403
 
 ---
 
-## 13. Endpoints que NÃO funcionam
+## 13. Comunicacao com Candidatos (sessao 33+)
+
+### Email (Amazon SES)
+```
+POST /comms/emails/submissions
+```
+```json
+{
+  "to": ["jobTalentId1", "jobTalentId2"],
+  "subject": "Assunto do email",
+  "body": "<p>Corpo em HTML</p>",
+  "from": "noreply@inhire.app"
+}
+```
+**Resposta:** 204 (sem body).
+
+### Templates de email
+```
+GET /comms/emails/templates → lista templates disponiveis
+```
+
+### WhatsApp (sessao 38)
+```
+POST /subscription-assistant/tenant/{tenantId}/send
+```
+```json
+{
+  "phone": "5511999999999",
+  "message": "Texto da mensagem (max 4096 chars)"
+}
+```
+**Validacoes:** Telefone 10-15 digitos (so numeros). Mensagem truncada a 4096 chars.
+
+**Erros especificos:**
+- `422` — Janela de 24h do WhatsApp expirada (candidato precisa ter interagido)
+- `400` — Telefone invalido
+
+**Nota:** Endpoint 502 no tenant demo (credenciais Meta pendentes). Funciona em producao.
+
+---
+
+## 14. Busca Full-Text de Talentos (sessao 34)
+
+### Obter chave Typesense
+```
+GET /search-talents/security/key/talents?engine=typesense
+```
+**Resposta:**
+```json
+{
+  "key": "scoped-key-read-only",
+  "indexName": "talents_demo",
+  "validForInMilliseconds": 86400000,
+  "appId": "..."
+}
+```
+**Chave:** Read-only, isolada por tenant, expira em 24h. Renovar automaticamente.
+
+**Uso:** Busca direta no Typesense com a scoped key (nao passa pela API InHire).
+
+---
+
+## 15. Endpoints que NÃO funcionam
 
 | Endpoint | Erro | Motivo |
 |---|---|---|
@@ -506,17 +577,24 @@ POST /attachments                   → 403
 
 ---
 
-## 13. Endpoints que NÃO existem na API
+## 16. Endpoints que NÃO existem na API
 
-| Funcionalidade | Confirmado por |
-|---|---|
-| InTerview — listar, ler resultados, disparar, cancelar | Marcelo (dev InHire) |
-| Busca full-text no Banco de Talentos | Doc original do projeto |
-| GraphQL | "Disponível apenas para uso interno" |
+| Funcionalidade | Status | Confirmado por |
+|---|---|---|
+| ~~Busca full-text no Banco de Talentos~~ | ✅ Resolvido (Typesense, sessao 34) | Andre |
+| InTerview — entrevista completa por WhatsApp | Modulo separado, sem API publica | Marcelo |
+| Formulario de inscricao — config de campos/perguntas | Sem endpoint | Testado |
+| Triagem IA — config de criterios | Sem endpoint | Testado |
+| Divulgacao em portais | Sem endpoint | Testado |
+| Automacoes de vaga | Sem endpoint | Help Center |
+| Historico de movimentacao do candidato | Sem endpoint | Testado |
+| Analytics/reporting | Sem endpoint | Testado |
+| Smart CV | Feature UI, sem API | Help Center |
+| GraphQL | Uso interno apenas | Andre |
 
 ---
 
-## 14. Bugs e comportamentos inesperados
+## 17. Bugs e comportamentos inesperados
 
 | Bug | Impacto | Workaround |
 |---|---|---|
@@ -530,7 +608,7 @@ POST /attachments                   → 403
 
 ---
 
-## 15. Documentação oficial
+## 18. Documentacao oficial
 
 - Help Center: https://help.inhire.app/pt-BR/
 - API pública (candidaturas paginadas): https://docs.inhire.com.br/api/obter-candidaturas-paginadas
