@@ -384,6 +384,49 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "smart_match",
+        "description": (
+            "Busca inteligente no banco de talentos. Cruza requisitos da vaga "
+            "com CVs usando IA. Encontra candidatos compatíveis automaticamente. "
+            "Use quando o recrutador pedir para achar, encontrar, buscar candidatos "
+            "compatíveis para a vaga, match de talentos, ou sourcing no banco interno."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Critérios de busca em linguagem natural (opcional, usa requisitos da vaga se vazio)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Máximo de candidatos para retornar (default 15)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "processar_linkedin",
+        "description": (
+            "Processa perfis do LinkedIn colados pelo recrutador. "
+            "Extrai dados, cria talento no InHire, vincula à vaga e avalia fit. "
+            "Use quando o recrutador colar URLs do LinkedIn (linkedin.com/in/...) "
+            "ou mencionar perfis do LinkedIn para adicionar, processar ou avaliar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "URLs ou usernames do LinkedIn extraídos da mensagem",
+                },
+            },
+            "required": ["urls"],
+        },
+    },
+    {
         "name": "conversa_livre",
         "description": (
             "Fallback para perguntas gerais sobre recrutamento ou qualquer assunto."
