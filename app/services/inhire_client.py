@@ -167,6 +167,18 @@ class InHireClient:
         except Exception:
             return None
 
+    # --- Timeline & History ---
+
+    async def get_job_talent_timeline(self, job_talent_id: str) -> list[dict]:
+        """Get chronological timeline of a candidate in a job (stages, statuses, transfers)."""
+        return await self._request("GET", f"/job-talents/{job_talent_id}/timeline")
+
+    async def get_stage_history_batch(self, job_talent_ids: list[str]) -> list[list[dict]]:
+        """Get stage change history for multiple candidates in one request."""
+        if not job_talent_ids:
+            return []
+        return await self._request("POST", "/job-talents/stages/history", json=job_talent_ids)
+
     # --- Scorecards ---
     async def get_scorecards(self, params: dict | None = None) -> list:
         return await self._request("GET", "/scorecards", params=params or {})
@@ -235,6 +247,45 @@ class InHireClient:
         if resume_analyzer is not None:
             payload["resumeAnalyzer"] = resume_analyzer
         return await self._request("PATCH", f"/jobs/{job_id}", json=payload)
+
+    # --- Screening On-Demand ---
+
+    async def analyze_resume(self, job_talent_id: str) -> dict | None:
+        """Trigger resume analysis for a specific candidate. Requires CV attached."""
+        try:
+            return await self._request("POST", f"/job-talents/resume/analyze/{job_talent_id}", json={})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                return None
+            raise
+
+    async def manual_screening(self, job_talent_id: str) -> dict | None:
+        """Trigger manual screening for a candidate (works for hunting candidates without form).
+        Returns screening result with score and status."""
+        try:
+            return await self._request("POST", f"/job-talents/{job_talent_id}/screening/manual", json={})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 403, 404):
+                return None
+            raise
+
+    async def get_resume_analysis(self, job_talent_id: str) -> dict | None:
+        """Get detailed resume analysis (score per criterion with evidence)."""
+        try:
+            return await self._request("GET", f"/job-talents/{job_talent_id}/resume-analysis")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    async def get_screening_analysis(self, job_talent_id: str) -> dict | None:
+        """Get detailed screening analysis (all criteria scores)."""
+        try:
+            return await self._request("GET", f"/job-talents/{job_talent_id}/screening-analysis")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
 
     # --- Job Talents (add talent to job) ---
     async def add_talent_to_job(self, job_id: str, talent_data: dict, source: str = "api",
@@ -400,6 +451,30 @@ class InHireClient:
         resp.raise_for_status()
         return resp.json()
 
+    # --- Automations ---
+
+    async def create_automation(self, payload: dict) -> dict:
+        """Create a workflow automation (trigger + action + conditions)."""
+        return await self._request("POST", "/workflows/automations", json=payload)
+
+    async def list_automations(self, job_id: str | None = None) -> list[dict]:
+        """List all automations, optionally filtered by job."""
+        params = {}
+        if job_id:
+            params = {"field": "jobId", "input": job_id}
+        return await self._request("GET", "/workflows/automations", params=params)
+
+    async def delete_automation(self, automation_id: str) -> None:
+        """Delete an automation."""
+        await self._request("DELETE", f"/workflows/automations/{automation_id}")
+
+    async def list_automation_executions(self, automation_id: str | None = None) -> list[dict]:
+        """List automation executions, optionally filtered by automation."""
+        params = {}
+        if automation_id:
+            params = {"field": "automationId", "input": automation_id}
+        return await self._request("GET", "/workflows/executions", params=params)
+
     # --- Talent Search (Typesense) ---
     async def get_typesense_key(self) -> dict:
         """Get a scoped Typesense key for full-text talent search.
@@ -412,6 +487,22 @@ class InHireClient:
             "GET", "/search-talents/security/key/talents",
             params={"engine": "typesense"},
         )
+
+    # --- Tags ---
+
+    async def add_tags_batch(self, job_talent_ids: list[str], tags: list[str]) -> dict:
+        """Add tags to multiple candidates in batch."""
+        return await self._request("POST", "/job-talents/tags/add/batch", json={
+            "jobTalentIds": job_talent_ids,
+            "tags": tags,
+        })
+
+    async def remove_tags_batch(self, job_talent_ids: list[str], tags: list[str]) -> dict:
+        """Remove tags from multiple candidates in batch."""
+        return await self._request("DELETE", "/job-talents/tags/delete/batch", json={
+            "jobTalentIds": job_talent_ids,
+            "tags": tags,
+        })
 
     # --- Job Publishing ---
 
