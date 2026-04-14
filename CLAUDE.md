@@ -24,7 +24,7 @@ app/
 ├── config.py                  # Pydantic Settings via .env
 ├── services/
 │   ├── inhire_auth.py         # JWT auth com retry + auto-refresh + asyncio lock
-│   ├── inhire_client.py       # HTTP client para InHire API (~25 endpoints)
+│   ├── inhire_client.py       # HTTP client para InHire API (~40 endpoints)
 │   ├── slack_client.py        # Slack Web API (mensagens, botões, split de msgs longas)
 │   ├── claude_client.py       # Claude API (prompt caching, tool use, extração, JD, shortlist)
 │   ├── conversation.py        # Máquina de estados (FlowState) + persistência Redis (TTL 7d)
@@ -72,13 +72,13 @@ handlers = {
 **Layer 1 — Funcional:**
 - `listar_vagas` → `_list_jobs()`
 - `criar_vaga` → seta COLLECTING_BRIEFING
-- `ver_candidatos` → `_check_candidates()` (foco: pessoas, scores, fit)
+- `ver_candidatos` → `_check_candidates()` (foco: pessoas, scores, fit) — aceita `stage_filter` para filtrar por etapa
 - `gerar_shortlist` → `_build_shortlist()` (ranking comparativo)
-- `status_vaga` → `_job_status_report()` (foco: SLA, pipeline, métricas)
+- `status_vaga` → `_job_status_report()` (foco: SLA, pipeline, métricas, funil visual, previsão IA)
 - `busca_linkedin` → `_generate_linkedin_search()`
-- `analisar_perfil` → `_analyze_profile()`
+- `analisar_perfil` → `_analyze_profile()` — extrai dados + botão "Adicionar à vaga?" com dedup
 - `mover_candidatos` → carrega candidatos → shortlist (inclui sem score) → aprovação → `_move_approved_candidates()` (batch)
-- `reprovar_candidatos` → carrega candidatos → filtra não-selecionados → aprovação → `_reject_candidates()` (reason=enum, comment=devolutiva)
+- `reprovar_candidatos` → carrega candidatos → filtra não-selecionados → aprovação → `_reject_candidates()` (reason=Haiku classifica motivo, comment=devolutiva personalizada por candidato)
 - `ver_memorias` → `_show_memories()` (padrões, config, insights semanais)
 - `conversa_livre` → resposta direta do `detect_intent` (tool_choice: auto) ou `claude.chat()` fallback
 
@@ -94,6 +94,9 @@ handlers = {
 
 **Layer 1 — Funcional (resolvido sessão 38):**
 - `enviar_whatsapp` → `_handle_send_whatsapp()` (mensagem livre + oferta pós-reprovação e agendamento)
+
+**Layer 1 — Funcional (resolvido sessão 40):**
+- `comparar_vagas` → `_compare_jobs()` (ranking de vagas ativas por velocidade, SLA, candidatos)
 
 ---
 
@@ -124,6 +127,14 @@ handlers = {
 | Carta oferta | `POST /offer-letters` (jobTalentId formato: `{jobId}*{talentId}`) |
 | Registrar webhook | `POST /integrations/webhooks` (**obrigatório:** `"rules": {}`) |
 | Scoped key Typesense | `GET /search-talents/security/key/talents?engine=typesense` (24h TTL, read-only) |
+| Buscar talento por email | `GET /talents/email/{email}` (retorna talento ou 404) |
+| Buscar talento por LinkedIn | `GET /talents/linkedin/{username}` (retorna talento ou 404) |
+| Buscar talentos por IDs | `POST /talents/ids` com `{ids: [...]}` |
+| Listar talentos paginado | `POST /talents/paginated` com `{limit, startKey}` |
+| Sugestão de reprovação | `POST /job-talents/reproval/suggestion/{jobTalentId}` |
+| Atualizar entrevista | `PATCH /job-talents/appointments/{id}/patch` |
+| URL documento oferta | `GET /offer-letters/document/{offerId}` |
+| Settings oferta | `GET /offer-letters/settings` |
 
 ### Bugs conhecidos da API
 
@@ -218,6 +229,24 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 31 | **tool_choice auto** — elimina double-call no `conversa_livre`, detect_intent responde direto | ✅ | 39 |
 | 32 | **Multi-modelo** — Haiku para `classify_briefing_reply` e `parse_routine_request` (3x mais barato) | ✅ | 39 |
 | 33 | **Compressão de tools** — 8 de 15 descriptions encurtadas (~600-900 tokens/chamada economizados) | ✅ | 39 |
+| 34 | **Busca por email/LinkedIn** — `get_talent_by_email`, `get_talent_by_linkedin`, `get_talents_by_ids`, `list_talents_paginated` | ✅ | 40 |
+| 35 | **Filtro por etapa** — `ver_candidatos` aceita `stage_filter`, Claude extrai da linguagem natural | ✅ | 40 |
+| 36 | **Rejeição inteligente** — Haiku classifica motivo (overqualified/underqualified/location/other) por candidato | ✅ | 40 |
+| 37 | **Devolutiva personalizada** — cada candidato recebe mensagem individual com nome, etapa, pontos fortes | ✅ | 40 |
+| 38 | **Sugestão de reprovação** — `get_reproval_suggestion()` consulta InHire antes de gerar devolutiva própria | ✅ | 40 |
+| 39 | **URL documento oferta** — mostra link do PDF gerado ao criar carta oferta | ✅ | 40 |
+| 40 | **Seleção de template** — múltiplos templates: match por nome ou número, fallback pro primeiro | ✅ | 40 |
+| 41 | **Data de início na oferta** — coleta e envia `dataInicio` nos `templateVariableValues` | ✅ | 40 |
+| 42 | **Remarcar entrevista** — `update_appointment()` via PATCH sem cancelar | ✅ | 40 |
+| 43 | **Lembrete entrevista** — APScheduler agenda Slack 2h antes do `startDateTime` | ✅ | 40 |
+| 44 | **Analisar → adicionar** — perfil analisado → extrai dados (Haiku) → botão → dedup email/LinkedIn → cria | ✅ | 40 |
+| 45 | **Devolutiva pós-fechamento** — webhook contratação → notifica sobre candidatos remanescentes | ✅ | 40 |
+| 46 | **Notificação de etapa** — webhook stage change → email ao candidato (opt-in `auto_stage_notification`) | ✅ | 40 |
+| 47 | **Funil de conversão** — barra visual █░ por etapa no relatório de status | ✅ | 40 |
+| 48 | **Previsão de fechamento** — Haiku estima quando vaga fecha baseado em dados do funil | ✅ | 40 |
+| 49 | **Comparação de vagas** — tool `comparar_vagas`, ranking por velocidade (cand/dia) | ✅ | 40 |
+| 50 | **Relatório semanal** — cron seg 9:30 BRT, consolida todas as vagas ativas com SLA e risco | ✅ | 40 |
+| 51 | **Mapeamento de gaps** — spec completa em `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` | ✅ | 40 |
 
 ---
 

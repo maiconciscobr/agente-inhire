@@ -2381,3 +2381,80 @@ Após 1-2 semanas de dados de logging:
 - **14 tools** funcionais
 - **Economia estimada:** 20-35% no custo da API Claude
 - **Todos os fluxos do recrutamento cobertos:** da abertura da vaga até a contratação, incluindo comunicação com candidatos via WhatsApp
+
+---
+
+## Sessão 40 — 2026-04-13 — Mapeamento de Gaps + Implementação de 18 Features
+
+### Objetivo
+
+Mapear TUDO que falta de API para o agente cobrir o ciclo completo de recrutamento, e implementar o que já dá pra fazer sem depender de endpoints novos do InHire.
+
+### Mapeamento de Gaps (spec)
+
+Criado documento completo em `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md`:
+- **73 funcionalidades** mapeadas por fase do funil (Abertura → Sourcing → Triagem → Entrevista → Oferta → Contratação → Analytics)
+- **28 funcionais** (nada a fazer)
+- **18 só precisam de dev no agente** (implementadas nesta sessão)
+- **22 precisam de endpoint novo na API** (documentadas com payloads esperados para o André)
+- **5 precisam de permissão no service account** (scorecards, users, team, files)
+
+### 18 Features Implementadas
+
+**Wave 1 — Quick Wins:**
+1. `get_talent_by_email()`, `get_talent_by_linkedin()` — busca por email/LinkedIn (endpoints existiam, não usados)
+2. `get_talents_by_ids()`, `list_talents_paginated()` — batch e paginação de talentos
+3. Fluxo analisar perfil → extrair dados (Haiku) → botão "Adicionar à vaga?" → dedup por email/LinkedIn → cria/linka
+4. `ver_candidatos` com `stage_filter` — "quem tá na entrevista?" filtra por etapa via Claude
+5. Rejeição inteligente — Haiku classifica motivo (overqualified/underqualified/location/other) por candidato
+6. Devolutiva personalizada — cada candidato recebe mensagem individual (nome, etapa, pontos fortes)
+7. `get_reproval_suggestion()` — consulta sugestão do InHire antes de gerar devolutiva própria
+
+**Wave 2 — Oferta e Entrevista:**
+8. URL do documento de oferta — link do PDF na mensagem de criação
+9. Seleção inteligente de template — match por nome/número quando há múltiplos
+10. Coleta data de início na oferta — `dataInicio` nos templateVariableValues
+11. Devolutiva em massa pós-fechamento — webhook contratação → notifica sobre remanescentes
+12. `update_appointment()` — remarcar entrevista sem cancelar (PATCH)
+13. Lembrete 2h antes da entrevista — APScheduler `trigger="date"`
+
+**Wave 3 — Analytics:**
+14. Funil de conversão visual — barra █░ por etapa no relatório de status
+15. Relatório semanal consolidado — cron seg 9:30 BRT, todas as vagas com SLA e risco
+16. `comparar_vagas` — nova tool, ranking por velocidade (cand/dia) com 🏆🥈🥉
+17. Notificação automática de mudança de etapa — email ao candidato (opt-in)
+18. Previsão de fechamento — Haiku analisa funil e estima prazo
+
+### Decisões técnicas
+
+- **Subagent-driven development:** 15 commits, tasks mecânicas em Haiku, integrações em Sonnet
+- **Haiku para classificação:** `classify_rejection_reason` e `generate_personalized_rejection` com max_tokens=20-300, custo ~$0.000001/chamada
+- **Opt-in para notificação de etapa:** campo `auto_stage_notification` no user_mapping, default False
+- **Deduplicação no "analisar → adicionar":** verifica email primeiro, depois LinkedIn, antes de criar talento novo
+
+### Deploy
+
+- 10 arquivos deployados via SCP
+- `systemctl restart agente-inhire` — startup OK, zero erros, 4 cron jobs registrados
+- Health check: `{"status":"ok"}`
+- Novo cron job: `_weekly_report` (seg 9:30 BRT)
+
+### Documentação gerada
+
+- `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` — spec de gaps (serve como pedido ao InHire)
+- `docs/superpowers/plans/2026-04-13-gap-implementation.md` — plano de implementação das 18 tasks
+
+### Top 5 endpoints pendentes pro André (InHire)
+
+1. `GET/PUT /jobs/{id}/application-form` — formulário de inscrição
+2. `POST /jobs/{id}/screening-config` — configurar triagem IA
+3. `POST /jobs/{id}/publish` — divulgação em portais
+4. `GET /job-talents/{jt}/history` — histórico de movimentação (base pra analytics)
+5. `POST /scorecards` + liberar GET — feedback de entrevistadores
+
+### Estado do projeto
+
+- **40 sessões**, 51 melhorias arquiteturais
+- **15 tools** funcionais (novo: `comparar_vagas`)
+- **~40 endpoints** da API InHire implementados no client
+- **73 funcionalidades mapeadas**, 46 implementadas, 22 bloqueadas por API, 5 por permissão
