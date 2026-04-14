@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import re
 import time
 
 from routers.handlers.helpers import _send, _send_approval, _suggest_next_action
@@ -391,3 +393,180 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
     except Exception as e:
         logger.exception("Erro ao gerar relatório: %s", e)
         await _send(conv, slack, channel_id, f"❌ Erro: {e}")
+
+
+def _extract_linkedin_username(url_or_username: str) -> str | None:
+    """Extract LinkedIn username from URL or raw username."""
+    text = url_or_username.strip().strip("<>")
+    # Full URL: linkedin.com/in/username or linkedin.com/in/username/
+    match = re.search(r"linkedin\.com/in/([a-zA-Z0-9_-]+)", text)
+    if match:
+        return match.group(1).lower()
+    # Already a username (no slashes, no dots except in names)
+    if re.match(r"^[a-zA-Z0-9_-]+$", text) and len(text) >= 3:
+        return text.lower()
+    return None
+
+
+async def _process_linkedin_profiles(conv, app, channel_id: str, tool_input: dict):
+    """Process LinkedIn profile URLs: dedup, add to InHire, trigger BrightData extraction, screen."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_id = conv.get_context("current_job_id")
+    job_name = conv.get_context("current_job_name", "")
+
+    if not job_id:
+        await _send(conv, slack, channel_id, "Preciso saber a vaga pra vincular os perfis. Me diz qual vaga ou crie uma primeiro.")
+        return
+
+    raw_urls = tool_input.get("urls", [])
+    if not raw_urls:
+        await _send(conv, slack, channel_id, "Não encontrei URLs do LinkedIn na mensagem. Cola os links que eu processo.")
+        return
+
+    if len(raw_urls) > 10:
+        await _send(conv, slack, channel_id, f"Muitos perfis de uma vez ({len(raw_urls)}). Máximo é 10 por mensagem. Manda em partes?")
+        return
+
+    # Extract usernames
+    usernames = []
+    invalid = []
+    for raw in raw_urls:
+        username = _extract_linkedin_username(raw)
+        if username:
+            usernames.append(username)
+        else:
+            invalid.append(raw)
+
+    if not usernames:
+        await _send(conv, slack, channel_id, "Não consegui extrair nenhum perfil LinkedIn dessas URLs. Confere e manda de novo?")
+        return
+
+    await _send(conv, slack, channel_id, f"Processando {len(usernames)} perfil(is) do LinkedIn... ⏳")
+
+    # Load existing candidates to check duplicates
+    existing_talents = await inhire.list_job_talents(job_id)
+    existing_talent_ids = {c.get("talentId", "") for c in existing_talents}
+
+    # Process each username concurrently (max 5)
+    semaphore = asyncio.Semaphore(5)
+    results = []
+
+    async def process_one(username: str) -> dict:
+        async with semaphore:
+            result = {"username": username, "status": "error", "name": username}
+            try:
+                # Dedup by LinkedIn username
+                talent = await inhire.get_talent_by_linkedin(username)
+
+                if talent:
+                    talent_id = talent.get("id", "")
+                    result["name"] = talent.get("name", username)
+                    result["talent_id"] = talent_id
+
+                    if talent_id in existing_talent_ids:
+                        result["status"] = "ja_vinculado"
+                        return result
+
+                    # Existing talent, just link to job
+                    resp = await inhire.add_existing_talent_to_job(job_id, talent_id, source="linkedin-hunting")
+                    result["jt_id"] = resp.get("id", f"{job_id}*{talent_id}")
+                    result["status"] = "existente_vinculado"
+                else:
+                    # Create new talent with LinkedIn username
+                    new_talent = await inhire.create_talent({
+                        "name": username,
+                        "linkedinUsername": username,
+                    })
+                    talent_id = new_talent.get("id", "")
+                    result["talent_id"] = talent_id
+
+                    # Add to job — triggers EventBridge → BrightData extraction
+                    resp = await inhire.add_existing_talent_to_job(job_id, talent_id, source="linkedin-hunting")
+                    result["jt_id"] = resp.get("id", f"{job_id}*{talent_id}")
+                    result["status"] = "novo"
+
+            except Exception as e:
+                logger.warning("Error processing LinkedIn %s: %s", username, e)
+                result["status"] = "error"
+                result["error"] = str(e)[:100]
+
+            return result
+
+    results = await asyncio.gather(*[process_one(u) for u in usernames])
+
+    # Tag new/linked candidates
+    new_jt_ids = [r["jt_id"] for r in results if r.get("jt_id") and r["status"] in ("novo", "existente_vinculado")]
+    if new_jt_ids:
+        try:
+            await inhire.add_tags_batch(new_jt_ids, ["hunting-linkedin"])
+        except Exception as e:
+            logger.warning("Failed to tag hunting-linkedin candidates: %s", e)
+
+    # Wait for BrightData to process new profiles
+    new_profiles = [r for r in results if r["status"] == "novo"]
+    if new_profiles:
+        await asyncio.sleep(10)
+
+    # Trigger screening and collect scores
+    for r in results:
+        jt_id = r.get("jt_id", "")
+        if not jt_id or r["status"] == "ja_vinculado":
+            continue
+        try:
+            screening = await inhire.manual_screening(jt_id)
+            if screening:
+                score = screening.get("score", screening.get("screening", {}).get("score"))
+                if score is not None:
+                    r["score"] = score
+                    continue
+        except Exception:
+            pass
+        try:
+            analysis = await inhire.analyze_resume(jt_id)
+            if analysis and analysis.get("analysis", {}).get("result"):
+                items = analysis["analysis"]["result"]
+                total = sum(i.get("score", 0) * i.get("weight", 1) for i in items)
+                weight = sum(i.get("weight", 1) for i in items)
+                if weight > 0:
+                    r["score"] = round(total / weight, 1)
+        except Exception:
+            pass
+
+    # Build response message
+    msg = f"🔗 *Perfis LinkedIn processados — {job_name}*\n\n"
+
+    for r in results:
+        username = r["username"]
+        name = r.get("name", username)
+        status = r["status"]
+        score = r.get("score")
+
+        if status == "novo":
+            score_str = f"Score: {score}/4.0 | " if score is not None else ""
+            msg += f"✅ *{name}* (@{username}) — adicionado, perfil em extração\n"
+            if score_str:
+                msg += f"   {score_str}\n"
+        elif status == "existente_vinculado":
+            score_str = f"Score: {score}/4.0 | " if score is not None else ""
+            msg += f"⚠️ *{name}* (@{username}) — já estava no banco, vinculei à vaga\n"
+            if score_str:
+                msg += f"   {score_str}\n"
+        elif status == "ja_vinculado":
+            msg += f"🔄 *{name}* (@{username}) — já vinculado à vaga\n"
+        else:
+            msg += f"❌ *{username}* — erro ao processar\n"
+        msg += "\n"
+
+    if invalid:
+        msg += f"⚠️ {len(invalid)} URL(s) não reconhecida(s): {', '.join(invalid[:3])}\n\n"
+
+    novos = len([r for r in results if r["status"] == "novo"])
+    vinculados = len([r for r in results if r["status"] == "existente_vinculado"])
+    if novos > 0:
+        msg += f"Perfis novos ({novos}) serão enriquecidos automaticamente pelo InHire.\n"
+    if novos + vinculados > 0:
+        msg += "Quer que eu analise algum em detalhe?"
+
+    await _send(conv, slack, channel_id, msg)
