@@ -1,192 +1,344 @@
-# Agente Eli — Mapa completo de limitações
+# Agente Eli — Mapa de Limitacoes e Pedidos de API
 
-> Comparação entre tudo que o InHire oferece vs o que o Agente Eli cobre hoje.
-> Baseado na pesquisa do Help Center do InHire (abril/2026).
+> Comparacao entre o que o InHire oferece vs o que o Agente Eli cobre.
+> Atualizado: sessao 40 (2026-04-14).
+> **Uso duplo:** referencia interna + guia para o time InHire (Andre) sobre endpoints necessarios.
 
 ---
 
-## 1. Criação e configuração de vagas
+## Estado atual do agente
+
+O Eli cobre o core do ciclo de recrutamento: criar vaga, listar candidatos, triagem com score inteligente, mover/reprovar em lote com devolutiva personalizada, agendar entrevista com lembrete, carta oferta com template, e comunicacao com candidatos via email + WhatsApp.
+
+**15 tools funcionais**, **~40 endpoints** implementados, **51 melhorias arquiteturais**.
+
+---
+
+## 1. Criacao e configuracao de vagas
 
 ### O que o Eli FAZ
-- Extrai dados do briefing (cargo, salário, modelo, requisitos, senioridade)
-- Gera job description completa
+- Extrai dados do briefing (cargo, salario, modelo, requisitos, senioridade)
+- Gera job description completa via Claude
 - Cria a vaga no InHire via API (`POST /jobs`)
 
-### O que o Eli NÃO preenche na criação
-| Campo/Config | Por que não faz | Solução |
+### O que FALTA — precisa de endpoint novo
+
+| Funcionalidade | Endpoint necessario | Impacto | Prioridade |
+|---|---|---|---|
+| **Formulario de inscricao** | `GET/PUT /jobs/{id}/application-form` | Sem formulario, candidatos entram sem filtro | **P1** |
+| **Perguntas eliminatorias** | Incluir no endpoint de formulario: `questions[]` com tipo e resposta esperada | Candidatos nao qualificados passam pela triagem | **P1** |
+| **Configurar triagem IA** | `POST /jobs/{id}/screening-config` com criterios (essencial/importante/diferencial) e pesos | Triagem IA nao roda — candidatos ficam "Pendente" | **P1** |
+| **Divulgacao em portais** | `POST /jobs/{id}/publish` com lista de canais + `GET /jobs/{id}/publish/channels` | Recrutador precisa entrar no InHire UI pra publicar | **P1** |
+| **Scorecard de entrevista** | `POST /jobs/{id}/scorecard` com criterios por etapa | Entrevistadores nao tem criterios estruturados | **P2** |
+| **Pipeline customizado** | `PUT /jobs/{id}/stages` | Eli usa pipeline padrao | **P3** |
+| **Templates de vaga** | `GET /job-templates` + `POST /jobs` com `templateId` | Nao reutiliza config de vagas similares | **P3** |
+| **Custom fields** | `GET /custom-fields` | Eli nao sabe quais campos a empresa usa | **P3** |
+
+### Payloads esperados (detalhes para implementacao)
+
+**Formulario de inscricao:**
+```json
+PUT /jobs/{jobId}/application-form
+{
+  "fields": [
+    { "name": "phone", "required": true },
+    { "name": "linkedin", "required": false },
+    { "name": "salary_expectation", "required": true }
+  ],
+  "questions": [
+    {
+      "text": "Voce tem disponibilidade para inicio imediato?",
+      "type": "yes_no",
+      "eliminatory": true,
+      "expected_answer": "yes"
+    }
+  ]
+}
+```
+
+**Configurar triagem IA:**
+```json
+POST /jobs/{jobId}/screening-config
+{
+  "criteria": [
+    { "name": "Python", "weight": "essential", "description": "3+ anos" },
+    { "name": "FastAPI", "weight": "important" },
+    { "name": "Docker", "weight": "nice_to_have" }
+  ],
+  "auto_reject_below": 2.0,
+  "auto_approve_above": 4.0
+}
+```
+
+**Divulgacao:**
+```json
+GET /jobs/{jobId}/publish/channels
+-> [{ "id": "linkedin", "name": "LinkedIn", "connected": true }, ...]
+
+POST /jobs/{jobId}/publish
+{ "channels": ["linkedin", "indeed", "careers_page"] }
+-> { "published": ["linkedin", "indeed"], "failed": [] }
+```
+
+---
+
+## 2. Sourcing e banco de talentos
+
+### O que o Eli FAZ
+- Busca LinkedIn (strings booleanas geradas por Claude)
+- Busca no banco de talentos (Typesense full-text, 86k+ talentos)
+- Analise de perfil colado (Claude avalia fit com a vaga)
+- Adicionar talento a vaga (cria ou linka existente)
+- Buscar talento por email (`GET /talents/email/{email}`)
+- Buscar talento por LinkedIn (`GET /talents/linkedin/{username}`)
+- Deduplicacao automatica (verifica email/LinkedIn antes de criar)
+- Fluxo "analisei perfil -> adicionar a vaga" com botao de aprovacao
+
+### O que FALTA — precisa de endpoint novo
+
+| Funcionalidade | Endpoint necessario | Prioridade |
 |---|---|---|
-| **Campos personalizados** (custom fields por empresa) | API não expõe quais custom fields existem | Precisaria de `GET /custom-fields` ou similar |
-| **Scorecard da vaga** (critérios de avaliação por entrevista) | API sem endpoint para criar scorecard | Recrutador configura no InHire |
-| **Pipeline customizado** (etapas diferentes do padrão) | Eli usa o pipeline padrão; não configura etapas | Recrutador ajusta no InHire se necessário |
-| **Formulário de inscrição** (perguntas personalizadas, campos obrigatórios) | Sem endpoint para configurar formulário | Recrutador configura no InHire |
-| **Critérios de triagem IA** (Essencial/Importante/Diferencial + faixa salarial) | Sem endpoint para configurar agente de triagem | Recrutador configura no InHire |
-| **Fluxo de aprovação de requisição** (lista de aprovadores internos) | Eli cria vaga direto, não cria requisição com aprovação | Poderia ser implementado se API tiver endpoint |
-| **Múltiplas posições com motivos diferentes** | Eli cria posições com motivo genérico "expansion" | Poderia pedir ao recrutador o motivo de cada posição |
-| **SLA / prazo da vaga** | Campo não é preenchido na criação | Poderia extrair do briefing se mencionado |
-| **Gestor técnico / hiring manager** | Extraído mas não enviado na API | API pode não ter campo para isso |
-| **Tags / labels da vaga** | Não implementado | Verificar se API aceita |
+| **Talent pools** | `GET/POST /talent-pools/{poolId}/talents` | **P2** |
+| **Programa de indicacoes** | `GET/POST /referrals` | **P3** |
 
 ---
 
-## 2. Divulgação de vagas
+## 3. Triagem de candidatos
 
-### O que o Eli NÃO faz (nada desta área)
-| Funcionalidade | Descrição |
-|---|---|
-| **Publicar em portais** | LinkedIn, Indeed, Netvagas, Glassdoor — configurável no InHire |
-| **Integração com job boards** | Pacote de job boards integrado |
-| **Configurar visibilidade** | Pública, restrita, interna |
-| **Página de vagas (careers page)** | EMPRESA.inhire.app/vagas — personalização visual |
-| **Link de compartilhamento** | Gerar links específicos por canal |
-| **Programa de indicação** | Links gamificados, dashboard de indicações, gestão de colaboradores que indicam |
+### O que o Eli FAZ
+- Lista candidatos com scores de triagem (alto/medio/baixo fit)
+- Filtra por etapa ("quem ta na entrevista?")
+- Gera shortlist comparativo (Claude ranqueia)
+- Move candidatos em lote (`POST /job-talents/talents/stages/batch`)
+- Reprova em lote com motivo inteligente (Haiku classifica: overqualified/underqualified/location/other)
+- Devolutiva personalizada por candidato (nome, etapa alcancada, pontos fortes)
+- Consulta sugestao de reprovacao do InHire antes de gerar propria
+- Oferece WhatsApp para enviar devolutiva
 
-**Motivo:** Sem endpoints de API para divulgação. O Eli apenas orienta o recrutador com passo a passo.
+### O que FALTA — precisa de endpoint novo
 
----
+| Funcionalidade | Endpoint necessario | Impacto | Prioridade |
+|---|---|---|---|
+| **Scores detalhados** | `GET /jobs/{id}/screening-results` com score por criterio + evidencia | Recrutador nao sabe POR QUE o score e X | **P2** |
+| **Triagem sob demanda** | `POST /job-talents/{jt}/screening/run` | Candidatos de hunting nao tem score automatico | **P2** |
+| **Persistir notas/ranking** | Campo `notes` ou `ranking` no `PATCH /job-talents/{jt}` | Analise do Claude nao e salva no InHire | **P3** |
+| **Tags em candidatos** | `POST /job-talents/{jt}/tags` | Nao da pra taggar ("forte tecnico", "validar ingles") | **P3** |
 
-## 3. Comunicação com candidatos
+### Payload esperado
 
-### O que o Eli NÃO faz (nada desta área)
-| Funcionalidade | Descrição |
-|---|---|
-| **Enviar emails aos candidatos** | Templates, agendamento, personalização — requer conectar email do recrutador |
-| **Templates de email** | Abordagem, rejeição, engajamento, formulário personalizado |
-| **WhatsApp / InTerview** | Entrevista e comunicação via WhatsApp dentro do InHire |
-| **Devolutiva direta ao candidato** | O Eli gera o texto mas não envia ao candidato |
+**Triagem sob demanda:**
+```json
+POST /job-talents/{jobTalentId}/screening/run
+-> { "status": "queued", "estimatedTime": "30s" }
 
-**Motivo:** 
-- Email: requer integração Google/Outlook do usuário, não da service account
-- WhatsApp: InTerview sem API pública
-- O Eli gera devolutivas mas a entrega ao candidato é manual
-
----
-
-## 4. Testes e avaliações
-
-### O que o Eli NÃO faz (nada desta área)
-| Funcionalidade | Descrição |
-|---|---|
-| **Teste DISC** | Avaliação comportamental — envio automático, análise de perfil |
-| **Testes Mindsight** | Testes de personalidade e competências — envio, análise, resultados |
-| **Testes personalizados** | Testes técnicos customizados pela empresa |
-| **Automação de envio de testes** | InHire envia automaticamente quando candidato chega em determinada etapa |
-
-**Motivo:** Sem endpoints de API para gerenciar testes. Os testes são um módulo separado do InHire.
+GET /job-talents/{jobTalentId}/screening/status
+-> { "status": "completed", "score": 4.2, "details": [...] }
+```
 
 ---
 
-## 5. Entrevistas
+## 4. Entrevistas
 
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição | Bloqueio |
+### O que o Eli FAZ
+- Agendar entrevista (provider: manual, sem calendario)
+- Cancelar entrevista
+- Remarcar entrevista (PATCH sem cancelar)
+- Listar entrevistas do candidato e do recrutador
+- Verificar disponibilidade
+- Lembrete automatico 2h antes (APScheduler)
+- WhatsApp pos-agendamento
+
+### O que FALTA
+
+| Funcionalidade | Endpoint/Acao necessaria | Impacto | Prioridade |
+|---|---|---|---|
+| **Integracao calendario** | Liberar `provider: "google"` ou `"microsoft"` no service account | Sem link de Meet/Zoom automatico | **P2** |
+| **Feedback do entrevistador** | `POST /scorecards` + **liberar `GET /scorecards` (hoje 403)** | Recrutador nao tem dados estruturados pos-entrevista | **P1** |
+| **Enviar teste** | `GET /jobs/{id}/available-tests` + `POST /jobs/{id}/tests/{testId}/send` | Nao dispara DISC/tecnico pro candidato | **P2** |
+| **Entrevistas em cascata** | `POST /appointments/create-batch` (ou orquestrar no agente) | Nao agenda RH + tecnica + gestor em sequencia | **P3** |
+| **Webhook entrevista concluida** | Webhook `appointment.completed` com status (completed/no_show) | Agente nao sabe quando entrevista acabou | **P2** |
+| **Kit de entrevista** | `GET /jobs/{id}/interview-kit` (ou montar no agente) | Entrevistador nao recebe roteiro | **P3** |
+
+### Payload esperado
+
+**Feedback do entrevistador (scorecard):**
+```json
+POST /scorecards
+{
+  "jobTalentId": "...",
+  "stageId": "...",
+  "evaluatorEmail": "entrevistador@empresa.com",
+  "scores": [
+    { "criteriaId": "uuid", "score": 4, "comment": "Muito bom tecnicamente" }
+  ],
+  "recommendation": "advance",
+  "overallComment": "Candidato forte"
+}
+```
+
+**ACAO NECESSARIA:** Liberar permissao de `GET /scorecards` para o service account (hoje retorna 403).
+
+---
+
+## 5. Carta oferta
+
+### O que o Eli FAZ
+- Criar carta oferta com template
+- Selecao inteligente de template (match por nome/numero)
+- Coleta data de inicio, salario, aprovador
+- Enviar notificacao ao candidato para assinar
+- Cancelar oferta
+- Mostrar link do documento PDF gerado
+
+### O que FALTA
+
+| Funcionalidade | Endpoint necessario | Prioridade |
 |---|---|---|
-| **Agendar entrevista** | Criar appointment com link de videochamada | API retorna 403 (Gap 1) |
-| **Interview Kit** | Roteiro de perguntas + scorecard por entrevista | Sem endpoint |
-| **Extensão Google Meet** | Preencher scorecard durante a call | Extensão Chrome, não API |
-| **Permissionamento de avaliadores** | Controlar quem vê o que no kit | Sem endpoint |
-| **Scorecard / avaliação pós-entrevista** | Registrar nota e feedback por critério | `GET /scorecards` retorna 403 |
+| **Variaveis do template** | `GET /offer-letters/templates/{templateId}` com `requiredVariables[]` | **P2** |
+| **Webhooks de oferta** | `offer-letter.signed`, `offer-letter.viewed`, `offer-letter.approved`, `offer-letter.rejected` | **P2** |
+| **Registro de recusa** | `POST /offer-letters/{id}/decline` com motivo e detalhes | **P2** |
+| **Contraproposta** | `PATCH /offer-letters/{id}` ou `POST /revise` | **P3** |
+
+### Payload esperado
+
+**Webhooks de oferta:**
+```
+Webhook: offer-letter.signed
+{ "offerId": "...", "jobTalentId": "...", "signedAt": "..." }
+
+Webhook: offer-letter.approved
+{ "offerId": "...", "approverEmail": "...", "approvedAt": "..." }
+```
 
 ---
 
-## 6. Carta oferta
+## 6. Comunicacao com candidatos
 
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição | Bloqueio |
+### O que o Eli FAZ
+- Enviar email via Amazon SES (`POST /comms/emails/submissions`)
+- Listar templates de email
+- Enviar WhatsApp (`POST /subscription-assistant/.../send`)
+- Comemoracao automatica de contratacao (webhook)
+- Notificacao ao recrutador sobre candidatos remanescentes pos-fechamento
+- Notificacao automatica de mudanca de etapa ao candidato (email, opt-in)
+
+### O que FALTA
+
+| Funcionalidade | Endpoint necessario | Prioridade |
 |---|---|---|
-| **Criar e enviar carta oferta** | Template + variáveis + aprovação + envio | API retorna 403 (Gap 2) |
-| **Fluxo de aprovação de oferta** | Aprovador interno antes de enviar ao candidato | API retorna 403 |
-| **Desativar aprovação** | Enviar direto sem aprovador | API retorna 403 |
-| **Templates de oferta** | Listar e usar templates configurados | API retorna 403 |
-
-**Código já está implementado** — só precisa da API liberada no tenant.
+| **Historico de comunicacao** | `GET /comms/{jobTalentId}/history` | **P2** |
+| **Talent pools (silver medalist)** | `GET/POST /talent-pools/{poolId}/talents` | **P2** |
 
 ---
 
-## 7. Banco de talentos
+## 7. Analytics
 
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição | Bloqueio |
+### O que o Eli FAZ
+- SLA da vaga (dias aberta)
+- Distribuicao por etapa
+- Funil de conversao visual (barra por etapa com %)
+- Previsao de fechamento (Haiku analisa funil e estima prazo)
+- Comparacao entre vagas (ranking por velocidade)
+- Relatorio semanal consolidado (seg 9:30 BRT)
+- Alertas de pipeline parado (escalonamento 3d/7d/14d)
+- Briefing diario (9h BRT)
+
+### O que FALTA — **endpoint mais critico**
+
+| Funcionalidade | Endpoint necessario | Impacto | Prioridade |
+|---|---|---|---|
+| **Historico de movimentacao** | `GET /job-talents/{jobTalentId}/history` | **Base para TODA analytics real** — sem ele nao da pra calcular tempo por etapa, funil real, nem time-to-hire preciso | **P1** |
+| **Analytics agregados** | `GET /analytics/funnel?jobId=` e `GET /analytics/time-to-hire?jobId=` | Nice to have — se o historico existir, o agente calcula sozinho | **P3** |
+
+### Payload esperado
+
+**Historico de movimentacao (CRITICO):**
+```json
+GET /job-talents/{jobTalentId}/history
+[
+  { "event": "applied", "timestamp": "2026-04-01T10:00:00Z" },
+  { "event": "stage_changed", "from": "Triagem", "to": "Entrevista RH", "timestamp": "2026-04-05T14:00:00Z" },
+  { "event": "status_changed", "status": "hired", "timestamp": "2026-04-12T16:00:00Z" }
+]
+```
+
+**Alternativa minima:** Retornar `stageChangedAt` no `GET /job-talents/{jobId}/talents` — a data da ultima movimentacao.
+
+---
+
+## 8. Testes e avaliacoes
+
+### O que o Eli NAO faz (nada desta area)
+
+| Funcionalidade | Bloqueio |
+|---|---|
+| Teste DISC | Modulo separado, sem API |
+| Testes Mindsight | Modulo separado, sem API |
+| Testes tecnicos | Modulo separado, sem API |
+| Automacao de envio de testes | Sem endpoint |
+
+---
+
+## 9. Fora do escopo do agente (features visuais/UI)
+
+- Pagina de vagas (careers page)
+- Extensoes Chrome (hunting, interview kit do Google Meet)
+- Dashboard visual de analytics
+- Modulo de diversidade
+- Smart CV (edicao visual)
+- Programa de indicacao (gamificacao, dashboard)
+
+---
+
+## Resumo consolidado — Pedidos ao InHire
+
+### Permissoes a liberar no service account (acao imediata)
+
+| Endpoint | Status atual | Impacto |
 |---|---|---|
-| **Busca full-text** | Buscar por nome, email, skills, cargo | Sem endpoint de busca (Gap 3) |
-| **Filtros avançados** | Cruzar informações (fonte, processo, etapa) | Sem endpoint |
-| **Reaproveitar candidatos** | Mover talento do banco para nova vaga | Parcial — `POST /job-talents/{jobId}/talents` funciona se tiver o ID |
+| `GET /scorecards` | 403 | Feedback de entrevistadores |
+| `GET /users` | 403 | Onboarding sem hack |
+| `GET /team` | 403 | Dados do time |
+| `GET /talents/{id}/files` | 403 | Acesso a CVs |
+| `GET /files/{id}` | 403 (auth S3) | Download de arquivos |
+
+### P1 — Criticos (desbloqueiam fluxos inteiros)
+
+| # | Endpoint | O que desbloqueia |
+|---|---|---|
+| 1 | `GET/PUT /jobs/{id}/application-form` | Formulario de inscricao configuravel pelo agente |
+| 2 | `POST /jobs/{id}/screening-config` | Triagem IA configurada automaticamente a partir do briefing |
+| 3 | `POST /jobs/{id}/publish` + `GET channels` | Publicar vaga em portais sem sair do Slack |
+| 4 | `GET /job-talents/{jt}/history` | Historico de movimentacao — base para analytics real |
+| 5 | `POST /scorecards` + liberar GET | Feedback estruturado de entrevistadores |
+
+### P2 — Importantes
+
+| # | Endpoint | O que melhora |
+|---|---|---|
+| 6 | `POST /jobs/{id}/scorecard` | Scorecard configurado a partir do briefing |
+| 7 | `POST /job-talents/{jt}/screening/run` | Triagem sob demanda para candidatos de hunting |
+| 8 | `GET /jobs/{id}/screening-results` | Scores detalhados por criterio |
+| 9 | `GET /offer-letters/templates/{templateId}` | Variaveis obrigatorias do template |
+| 10 | Webhooks: `offer.signed`, `offer.approved`, `appointment.completed` | Automacoes de oferta e entrevista |
+| 11 | `POST /talent-pools/{poolId}/talents` | Silver medalist / banco de talentos |
+| 12 | `GET /comms/{jt}/history` | Historico de comunicacao |
+| 13 | `POST /offer-letters/{id}/decline` | Registro de recusa com motivo |
+
+### P3 — Desejaveis
+
+| # | Endpoint | O que completa |
+|---|---|---|
+| 14 | `PUT /jobs/{id}/stages` | Pipeline customizado |
+| 15 | `GET /job-templates` | Templates de vaga |
+| 16 | `POST /job-talents/{jt}/tags` | Tags em candidatos |
+| 17 | `POST /appointments/create-batch` | Cascata de entrevistas |
+| 18 | `GET /jobs/{id}/available-tests` + `POST send` | Envio de testes |
+| 19 | `GET /jobs/{id}/interview-kit` | Kit para entrevistador |
 
 ---
 
-## 8. Analytics e relatórios
+## Spec tecnica completa
 
-### O que o Eli faz parcialmente
-- Relatório de status da vaga (SLA, dias aberta, candidatos por etapa)
-
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição |
-|---|---|
-| **Analytics end-to-end** | Dashboard completo do InHire (funil, conversão, tempo por etapa) |
-| **Relatórios customizados** | Exportação de dados específicos |
-| **Dashboard de indicações** | Métricas do programa de referral |
-| **Dashboard de diversidade** | Métricas de inclusão e acessibilidade |
-
-**Motivo:** Sem endpoints de API para relatórios. O Eli calcula métricas básicas a partir dos dados que tem.
-
----
-
-## 9. Diversidade e inclusão
-
-### O que o Eli NÃO faz (nada desta área)
-| Funcionalidade | Descrição |
-|---|---|
-| **Módulo de diversidade** | Vagas afirmativas, dados sensíveis, LGPD |
-| **Acessibilidade** | Leitor de tela, alto contraste, Libras nos testes |
-
----
-
-## 10. Smart CV
-
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição |
-|---|---|
-| **Gerar Smart CV** | CV padronizado e editável a partir do perfil do talento |
-| **Compartilhar com gestores** | Link público ou PDF para hiring manager |
-| **Ocultar campos sensíveis** | Remover info antes de compartilhar (reduzir viés) |
-
----
-
-## 11. Extensões Chrome
-
-### O que o Eli NÃO faz
-| Funcionalidade | Descrição |
-|---|---|
-| **Extensão de Hunting** | Capturar perfis do LinkedIn direto pro InHire |
-| **Extensão Interview Kit** | Preencher scorecard durante Google Meet |
-
-**Nota:** O Eli já tem endpoint `POST /extension/analyze` para análise de perfil via extensão Chrome, mas a extensão de hunting do InHire é separada.
-
----
-
-## Resumo por prioridade
-
-### Resolvível com APIs que existem (só precisam ser liberadas)
-1. **Agendamento de entrevista** — endpoint existe, 403
-2. **Carta oferta** — endpoint existe, 403
-3. **Scorecards** — endpoint existe, 403
-
-### Precisa de novos endpoints
-4. **Busca no banco de talentos** — busca full-text
-5. **Configurar formulário de inscrição** — campos e perguntas
-6. **Configurar triagem IA** — critérios Essencial/Importante/Diferencial
-7. **Configurar scorecard da vaga** — critérios de avaliação
-8. **Custom fields** — listar campos personalizados da empresa
-9. **Relatórios/analytics** — métricas de funil e conversão
-
-### Precisa de integração externa
-10. **Envio de email ao candidato** — precisa da conta do recrutador (Google/Outlook)
-11. **WhatsApp / InTerview** — sem API pública
-12. **Testes DISC / Mindsight** — módulo separado sem API
-
-### Fora do escopo do agente (features visuais/UI)
-13. Página de vagas (careers page)
-14. Extensões Chrome (hunting, interview kit)
-15. Dashboard visual de analytics
-16. Módulo de diversidade
-17. Smart CV (edição visual)
-18. Programa de indicação (gamificação, dashboard)
+Para payloads detalhados de todos os endpoints, ver:
+`docs/superpowers/specs/2026-04-13-gap-api-agente-design.md`
