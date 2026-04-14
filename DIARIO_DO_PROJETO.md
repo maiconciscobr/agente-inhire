@@ -2441,8 +2441,22 @@ Criado documento completo em `docs/superpowers/specs/2026-04-13-gap-api-agente-d
 
 ### Documentação gerada
 
-- `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` — spec de gaps (serve como pedido ao InHire)
+- `MAPA_COBERTURA_ELI.md` — documento canonical (consolidou e substituiu `LIMITACOES_AGENTE_ELI.md` + spec de gaps)
+- `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` — deprecado, snapshot histórico
 - `docs/superpowers/plans/2026-04-13-gap-implementation.md` — plano de implementação das 18 tasks
+
+### Pesquisa Help Center InHire — 8 gaps novos descobertos
+
+Comparação exaustiva com o Help Center revelou funcionalidades que não estavam no mapeamento original:
+
+1. **Agente de Triagem** — não é só IA, é um agente autônomo que lê CV + formulário
+2. **Parecer com IA** — parte do Kit Entrevista, gera parecer automático do candidato
+3. **Automações de vaga** — ações automáticas por mudança de etapa (enviar teste, email)
+4. **InTerview** — entrevista completa por WhatsApp (módulo separado do envio simples)
+5. **Módulo de Reporting** — analytics ponta-a-ponta com 3 visualizações
+6. **Smart CV** — CV editável/padronizado + compartilhar com gestor + ocultar dados
+7. **Classificação de talentos** — Gostei/Amei/Não gostei no banco de talentos
+8. **Agendar email** — não só enviar, agendar pra futuro
 
 ### Top 5 endpoints pendentes pro André (InHire)
 
@@ -2457,4 +2471,4 @@ Criado documento completo em `docs/superpowers/specs/2026-04-13-gap-api-agente-d
 - **40 sessões**, 51 melhorias arquiteturais
 - **15 tools** funcionais (novo: `comparar_vagas`)
 - **~40 endpoints** da API InHire implementados no client
-- **73 funcionalidades mapeadas**, 46 implementadas, 22 bloqueadas por API, 5 por permissão
+- **95 funcionalidades mapeadas** (vs 73 antes): 33 funcionais, 8 parciais, 27 precisam endpoint, 22 UI, 5 módulo externo

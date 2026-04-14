@@ -1,5 +1,7 @@
 # Mapeamento de Gaps — API InHire × Agente Eli
 
+> **DEPRECADO:** Este documento e um snapshot da sessao 40. O documento canonical e `MAPA_COBERTURA_ELI.md` na raiz do projeto.
+
 > **Data:** 2026-04-13
 > **Objetivo duplo:** (1) Backlog de desenvolvimento do agente Eli, (2) Pedido de endpoints ao time InHire
 > **Organização:** Por fase do funil de recrutamento
