@@ -98,6 +98,10 @@ handlers = {
 **Layer 1 — Funcional (resolvido sessão 40):**
 - `comparar_vagas` → `_compare_jobs()` (ranking de vagas ativas por velocidade, SLA, candidatos)
 
+**Layer 1 — Funcional (resolvido sessão 42):**
+- `smart_match` → `_smart_match()` (busca IA no banco de talentos 86k+ via `gen_filter_job_talents` + screening automático + tags)
+- `processar_linkedin` → `_process_linkedin_profiles()` (recrutador cola URLs → dedup → cria talento → vincula à vaga → BrightData extrai perfil → screening)
+
 ---
 
 ## Armadilhas da API InHire
@@ -130,6 +134,8 @@ handlers = {
 | Buscar talento por email | `GET /talents/email/{email}` (retorna talento ou 404) |
 | Buscar talento por LinkedIn | `GET /talents/linkedin/{username}` (retorna talento ou 404) |
 | Buscar talentos por IDs | `POST /talents/ids` com `{ids: [...]}` |
+| Criar talento | `POST /talents` com `{name, linkedinUsername}` |
+| Busca IA talentos | `POST /search-talents/ai/generate-job-talent-filter` com `{jobId, query}` |
 | Listar talentos paginado | `POST /talents/paginated` com `{limit, startKey}` |
 | Sugestão de reprovação | `POST /job-talents/reproval/suggestion/{jobTalentId}` |
 | Atualizar entrevista | `PATCH /job-talents/appointments/{id}/patch` |
@@ -258,6 +264,8 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 60 | **Tags em candidatos** — `POST /job-talents/tags/add/batch` + DELETE batch | ✅ | 41 |
 | 61 | **Memória hierárquica** — extract_facts (Haiku) + perfil recrutador + session summaries (Redis 4 níveis) | ✅ | 41 |
 | 62 | **Injeção de contexto hierárquica** — perfil + fatos + sessão anterior + insight semanal no system prompt | ✅ | 41 |
+| 63 | **Smart Match** — tool `smart_match`, busca IA no banco 86k+ (`gen_filter_job_talents` + fallback Typesense) + screening + tags | ✅ | 42 |
+| 64 | **Processar LinkedIn** — tool `processar_linkedin`, cola URLs → dedup → cria talento → vincula vaga → BrightData extrai → screening | ✅ | 42 |
 | 63 | **TTLs em todas as keys Redis** — decisões 180d, users 365d, insights 10d, interaction 30d, threshold 90d | ✅ | 41 |
 | 64 | **Atomicidade Redis** — pipeline atômico no counter, `set(nx=True, ex=ttl)` nos alertas | ✅ | 41 |
 | 65 | **Limpeza de contexto** — `conv.context` limpa 18 keys ao trocar de vaga ativa | ✅ | 41 |

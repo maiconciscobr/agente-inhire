@@ -2,6 +2,80 @@
 
 ---
 
+## Sessão 42 — 14 de abril de 2026
+
+### Objetivo
+Criar habilidade de hunting via LinkedIn — procurar talentos pro Eli.
+
+### Processo de design (brainstorming completo)
+
+1. **Ideia inicial:** scraping direto no LinkedIn via Apify
+2. **Autocrítica:** Proxycurl fechou (jul/2025), Apify actors são frágeis, dados públicos são rasos
+3. **Descoberta crucial:** varredura do código-fonte InHire revelou que a plataforma já tem:
+   - `POST /search-talents/ai/generate-job-talent-filter` — busca IA via GPT-4o-mini
+   - `generateResumeFromLinkedin` — EventBridge + BrightData (automático ao adicionar talento com linkedinUsername)
+   - `POST /job-talents/resume/analyze/{id}` — scoring de CV contra vaga
+   - `POST /job-talents/{id}/screening/manual` — triagem sob demanda
+4. **Decisão final:** usar endpoints nativos do InHire. Zero dependência externa nova, custo ~$0.
+
+### Implementações
+
+**Tool `smart_match` — busca IA no banco de talentos:**
+- Recrutador diz "acha gente boa pra essa vaga"
+- Eli monta query (requisitos vaga + mensagem + fatos do recrutador)
+- Chama `gen_filter_job_talents()` (IA do InHire gera filtros Typesense)
+- Fallback: Claude gera queries + busca direta no Typesense
+- Dedup contra candidatos já vinculados
+- Adiciona novos à vaga + tagueia "smart-match"
+- Dispara screening (`manual_screening` ou `analyze_resume`)
+- Mostra ranking com scores no Slack
+- Rate limit: 5/hora por recrutador (Redis)
+
+**Tool `processar_linkedin` — processar URLs do LinkedIn:**
+- Recrutador cola URLs (max 10) do LinkedIn no Slack
+- Eli extrai usernames via regex
+- Dedup por `get_talent_by_linkedin(username)`
+- Se novo: `create_talent({linkedinUsername})` → `add_existing_talent_to_job()`
+- EventBridge dispara BrightData automaticamente (extrai perfil completo)
+- Aguarda 10s → dispara screening → mostra resultados com scores
+- Tagueia como "hunting-linkedin"
+- Concorrência: `asyncio.Semaphore(5)`
+
+**Métodos novos no `inhire_client.py`:**
+- `gen_filter_job_talents(job_id, query)` — busca IA → filtros Typesense
+- `create_talent(data)` — cria talento básico (pra LinkedIn)
+
+### Arquivos modificados
+- `app/services/inhire_client.py` — +2 métodos
+- `app/services/claude_client.py` — +2 tools (22 total)
+- `app/routers/handlers/hunting.py` — +2 handlers + 1 helper (~300 linhas)
+- `app/routers/slack.py` — imports + elif chain
+
+### Deploy
+- 4 arquivos via SCP → servidor 65.109.160.97
+- Restart OK, serviço ativo
+- **Teste bloqueado:** créditos Anthropic API esgotados (400 Bad Request: "credit balance too low")
+
+### Pendente (próxima sessão)
+- Recarregar créditos Anthropic API
+- Testar smart_match E2E via Slack
+- Testar processar_linkedin E2E via Slack
+- Validar se `gen_filter_job_talents` funciona no tenant demo ou se cai no fallback
+- Investigar endpoint `/talents/smartcv` (descoberto, não testado)
+
+### Specs e planos
+- Spec: `docs/superpowers/specs/2026-04-14-hunting-linkedin-smart-match-design.md`
+- Plano: `docs/superpowers/plans/2026-04-14-hunting-linkedin-smart-match.md`
+
+### Decisões técnicas
+- **Sem Apify/scraping:** endpoints nativos do InHire são superiores (dados ricos, zero custo, zero risco legal)
+- **Fallback duplo no smart_match:** IA InHire → Claude gera queries → Typesense direto
+- **Screening duplo:** `manual_screening()` primeiro, fallback `analyze_resume()` (calcula score manualmente)
+- **asyncio.sleep(10)** no processar_linkedin: tempo pro BrightData processar perfil antes de tentar screening
+- **Rate limit best-effort:** Redis INCR com EX 3600, não bloqueia se Redis falhar
+
+---
+
 ## Sessão 1 — 30 de março de 2026
 
 ### O que foi feito
