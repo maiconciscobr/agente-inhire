@@ -131,12 +131,12 @@ POST /jobs/{jobId}/publish
 
 | Funcionalidade | Status | Endpoint necessario | Prioridade |
 |---|---|---|---|
-| **Agente de Triagem** (autonomo, le CV + formulario) | Sem endpoint de config | `POST /jobs/{id}/screening-config` (ver secao 1) | **P1** |
-| Scores detalhados (por criterio + evidencia) | Sem endpoint | `GET /jobs/{id}/screening-results` | **P2** |
-| Triagem sob demanda (hunting) | Sem endpoint | `POST /job-talents/{jt}/screening/run` | **P2** |
+| **Agente de Triagem** (config de criterios) | ✅ Implementado | `PATCH /jobs/{id}` com `screeningSettings` + `resumeAnalyzer` | — |
+| Scores detalhados (por criterio + evidencia) | ✅ Implementado | `GET /job-talents/{id}/resume-analysis` + `GET /{id}/screening-analysis` | — |
+| Triagem sob demanda (hunting) | ✅ Implementado | `POST /job-talents/{id}/screening/manual` + `POST /resume/analyze/{id}` | — |
 | Persistir notas/ranking do Claude | Sem campo | `PATCH /job-talents/{jt}` com campo `notes` | **P3** |
-| Tags em candidatos | Sem endpoint | `POST /job-talents/{jt}/tags` | **P3** |
-| Classificar talentos (Gostei/Amei/Nao gostei) | Sem endpoint | `PATCH /talents/{id}` com campo `classification` | **P3** |
+| Tags em candidatos | ✅ Implementado | `POST /job-talents/tags/add/batch` | — |
+| Classificar talentos (reacao) | Disponivel | `POST /job-talents/reaction/{id}` — nao implementado no agente | **P3** |
 
 **Payload — Triagem sob demanda:**
 ```json
@@ -183,7 +183,7 @@ GET /jobs/{jobId}/screening-results
 | Enviar teste DISC | Modulo Mindsight | Sem API publica | **P2** |
 | Enviar testes Mindsight (BIG FIVE, fit cultural) | Modulo Mindsight | Sem API publica | **P2** |
 | Enviar testes personalizados (tecnicos) | Sem endpoint | `GET/POST /jobs/{id}/tests` | **P2** |
-| **Automacoes de vaga** (acao por mudanca de etapa) | Sem endpoint | `GET/POST /jobs/{id}/automations` | **P2** |
+| **Automacoes de vaga** (acao por mudanca de etapa) | ✅ Implementado | `POST /workflows/automations` (CRUD completo) | — |
 | Entrevistas em cascata | Sem endpoint | `POST /appointments/create-batch` | **P3** |
 | Webhook entrevista concluida | Sem webhook | `appointment.completed` com status | **P2** |
 | No-show tracking | Sem campo | `PATCH /appointments/{id}` com `status: "no_show"` | **P3** |
@@ -306,30 +306,17 @@ POST /offer-letters/{offerId}/decline
 - Relatorio semanal consolidado (seg 9:30 BRT)
 - Alertas de pipeline parado (escalonamento 3d/7d/14d)
 - Briefing diario (9h BRT)
+- **Tempo medio por etapa** via timeline (sessao 40) — `GET /job-talents/{jt}/timeline`
+- **Historico de movimentacao** — endpoint EXISTE: `GET /job-talents/{id}/timeline` + `POST /job-talents/stages/history`
 
-### Gaps
+### Gaps restantes
 
 | Funcionalidade | Status | Endpoint/Acao | Prioridade |
 |---|---|---|---|
-| **Historico de movimentacao** | Sem endpoint | `GET /job-talents/{jt}/history` — **base pra toda analytics** | **P1** |
-| Time-to-hire | Depende do historico | Calcular no agente com timestamps | **P1** |
-| Tempo por etapa | Depende do historico | Idem | **P1** |
 | **Modulo de Reporting** (3 visualizacoes) | Feature UI | Listagem, hunting, periodo | N/A |
 | Dashboard personalizado por empresa | Feature UI | | N/A |
 | Exportar dados/relatorios | Sem API | | **P3** |
 | Dashboard de indicacoes | Feature UI | | N/A |
-
-**Payload — Historico de movimentacao (CRITICO):**
-```json
-GET /job-talents/{jobTalentId}/history
-[
-  { "event": "applied", "timestamp": "2026-04-01T10:00:00Z" },
-  { "event": "stage_changed", "from": "Triagem", "to": "Entrevista RH", "timestamp": "2026-04-05T14:00:00Z" },
-  { "event": "status_changed", "status": "hired", "timestamp": "2026-04-12T16:00:00Z" }
-]
-```
-
-**Alternativa minima:** Retornar `stageChangedAt` no `GET /job-talents/{jobId}/talents`.
 
 ---
 
@@ -348,9 +335,11 @@ GET /job-talents/{jobTalentId}/history
 ## 10. Integracoes e extensoes
 
 ### Eli FAZ
-- API REST (~40 endpoints implementados)
+- API REST (~55 endpoints implementados)
 - Webhooks (stage change, contratacao)
 - Slack bot completo (DM + botoes + interacoes)
+- Automacoes de vaga (`POST /workflows/automations`)
+- Tags em candidatos (`POST /job-talents/tags/add/batch`)
 
 ### Fora do escopo
 - Extensao Chrome Hunting (LinkedIn) — modulo externo
@@ -363,12 +352,14 @@ GET /job-talents/{jobTalentId}/history
 
 | Status | Qtd | % |
 |---|---|---|
-| Funcional no agente | **33** | 35% |
+| Funcional no agente | **48** | 51% |
 | Parcial | **8** | 8% |
-| Precisa de endpoint novo | **27** | 28% |
+| Precisa de endpoint novo | **12** | 13% |
 | Feature UI (fora do escopo) | **22** | 23% |
 | Modulo externo (Mindsight/Chrome) | **5** | 5% |
 | **Total mapeado** | **95** | 100% |
+
+> **Atualizado sessao 40:** Varredura do codigo-fonte InHire revelou 15 endpoints que existiam mas nao sabiamos. Timeline, screening on-demand, automacoes, tags, scorecards detalhados — todos disponiveis.
 
 ---
 
@@ -384,47 +375,55 @@ GET /job-talents/{jobTalentId}/history
 | `GET /talents/{id}/files` | 403 | Acesso a CVs |
 | `GET /files/{id}` | 403 (auth S3) | Download de arquivos |
 
-### P1 — Criticos (desbloqueiam fluxos inteiros)
+### P1 — ~~Criticos~~ RESOLVIDOS (descobertos no codigo-fonte)
 
-| # | Endpoint | O que desbloqueia |
+| # | Endpoint | Status |
 |---|---|---|
-| 1 | `GET/PUT /jobs/{id}/application-form` | Formulario de inscricao configuravel |
-| 2 | `POST /jobs/{id}/screening-config` | Triagem IA configurada a partir do briefing |
-| 3 | `POST /jobs/{id}/publish` + `GET channels` | Publicar vaga em portais sem sair do Slack |
-| 4 | `GET /job-talents/{jt}/history` | Historico de movimentacao — base pra analytics |
-| 5 | `POST /scorecards` + liberar GET | Feedback estruturado de entrevistadores |
+| ~~1~~ | ~~Formulario de inscricao~~ | ✅ `GET /forms/job-id/{jobId}` + `PATCH /forms/{formId}` + `POST /forms` |
+| ~~2~~ | ~~Triagem IA~~ | ✅ `PATCH /jobs/{id}` com `screeningSettings` + `resumeAnalyzer` |
+| ~~3~~ | ~~Divulgacao em portais~~ | ✅ `GET /integrations` + `POST /job-posts/pages` |
+| ~~4~~ | ~~Historico de movimentacao~~ | ✅ `GET /job-talents/{id}/timeline` + `POST /stages/history` |
+| ~~5~~ | ~~Scorecards~~ | ✅ `GET/POST /forms/scorecards/jobs/{jobId}` + avaliacao por candidato |
 
-### P2 — Importantes
+### Pendentes — Ainda precisam do InHire
 
-| # | Endpoint | O que melhora |
+| # | Endpoint | O que falta | Prioridade |
+|---|---|---|---|
+| 1 | Liberar `GET /scorecards` (403) | Permissao do service account | **P1** |
+| 2 | Liberar `GET /users` (403) | Onboarding sem hack | **P1** |
+| 3 | Liberar `GET /talents/{id}/files` (403) | Acesso a CVs | **P2** |
+| 4 | `POST /talent-pools/{poolId}/talents` | Talent pools / silver medalist | **P2** |
+| 5 | `GET /comms/emails/submissions/{jobTalentId}` | Historico de comunicacao por candidato | **P2** |
+| 6 | `POST /offer-letters/{id}/decline` | Registro de recusa com motivo | **P2** |
+| 7 | Contraproposta de oferta | `PATCH /offer-letters/{id}` ou `POST /revise` | **P3** |
+| 8 | Campos personalizados | `GET /custom-fields` — verificar se ja existe no jobs service | **P3** |
+| 9 | `POST /job-talents/reaction/{id}` | Classificar candidatos (implementar no agente) | **P3** |
+| 10 | Envio de testes Mindsight via API | Modulo externo — verificar se tem rota publica | **P3** |
+
+### Endpoints descobertos no codigo que o agente ainda nao usa (proximos a implementar)
+
+| # | Endpoint | O que faz |
 |---|---|---|
-| 6 | `POST /jobs/{id}/scorecard` | Scorecard configurado a partir do briefing |
-| 7 | `POST /job-talents/{jt}/screening/run` | Triagem sob demanda para candidatos de hunting |
-| 8 | `GET /jobs/{id}/screening-results` | Scores detalhados por criterio |
-| 9 | `GET /offer-letters/templates/{templateId}` | Variaveis obrigatorias do template |
-| 10 | Webhooks: `offer.signed`, `offer.approved`, `appointment.completed` | Automacoes de oferta e entrevista |
-| 11 | `POST /talent-pools/{poolId}/talents` | Talent pools / silver medalist |
-| 12 | `GET /comms/{jt}/history` | Historico de comunicacao |
-| 13 | `POST /offer-letters/{id}/decline` | Registro de recusa com motivo |
-| 14 | `GET/POST /jobs/{id}/automations` | Automacoes de vaga (acao por mudanca de etapa) |
-| 15 | `GET /jobs/{id}/interview-kit` | Kit de entrevista |
-
-### P3 — Desejaveis
-
-| # | Endpoint | O que completa |
-|---|---|---|
-| 16 | `PUT /jobs/{id}/stages` | Pipeline customizado |
-| 17 | `GET /job-templates` | Templates de vaga |
-| 18 | `POST /job-talents/{jt}/tags` | Tags em candidatos |
-| 19 | `POST /appointments/create-batch` | Cascata de entrevistas |
-| 20 | `GET/POST /jobs/{id}/tests` | Envio de testes |
-| 21 | `GET /custom-fields` | Campos personalizados da empresa |
-| 22 | `PATCH /talents/{id}` com `classification` | Classificar talentos (Gostei/Amei) |
+| 1 | `POST /forms/ai/generate-subscription-form` | IA gera perguntas do formulario a partir da JD |
+| 2 | `POST /search-talents/ai/generate-job-talent-filter` | IA gera filtros Typesense |
+| 3 | `GET /forms/scorecards/interview-kit-fill/{id}/jobTalent/{jt}` | Kit de entrevista completo |
+| 4 | `POST /forms/scorecards/jobTalent/{jt}/{interviewId}` | Registrar avaliacao de entrevista |
+| 5 | `POST /forms/ai/generate-feedback` | IA gera feedback de scorecard |
+| 6 | `POST /forms/surveys` | Agendar pesquisa de experiencia (NPS) |
+| 7 | `GET /forms/surveys/jobs/{jobId}/metrics` | Metricas de surveys |
+| 8 | `POST /forms/comms/disc/send/email` | Enviar teste DISC |
+| 9 | `POST /forms/{typeformId}/comms/send/email` | Enviar qualquer formulario por email |
+| 10 | `GET /jobs/templates` + `POST /jobs/templates` | Templates de vaga |
+| 11 | `POST /jobs/stages` + `PATCH /jobs/stages` | Pipeline customizado |
+| 12 | `POST /jobs/duplicate` | Duplicar vaga |
+| 13 | `GET /talents/smartcv` + `POST /talents/smartcv` | Smart CV |
+| 14 | `GET /referrals` + `POST /referrals` | Programa de indicacao |
+| 15 | `GET /offer-letters/templates/{id}` | Template com variaveis detalhadas |
 
 ---
 
 ## Historico
 
-- **Sessao 40 (2026-04-14):** Criacao do mapeamento + 18 features implementadas + pesquisa Help Center
-- **Spec original (snapshot):** `docs/superpowers/specs/2026-04-13-gap-api-agente-design.md` (historico, nao manter)
-- **Plano de implementacao:** `docs/superpowers/plans/2026-04-13-gap-implementation.md`
+- **Sessao 40 (2026-04-14):** Criacao do mapeamento + 18 features + pesquisa Help Center + varredura codigo-fonte InHire
+- Varredura revelou ~500 rotas HTTP em 10+ servicos. 15 endpoints que achavamos inexistentes ja existiam
+- Cobertura saltou de 35% para 51% das funcionalidades mapeadas
