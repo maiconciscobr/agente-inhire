@@ -228,14 +228,29 @@ class InHireClient:
             json={"id": file_id, "category": category, "name": file_name},
         )
 
-    async def search_files(self, file_id: str = "", file_category: str = "resumes") -> list[dict]:
-        """Search for files by ID or category. Correct endpoint per André (not GET /talents/{id}/files)."""
-        payload: dict = {}
-        if file_id:
-            payload["id"] = file_id
-        if file_category:
-            payload["fileCategory"] = file_category
-        return await self._request("POST", "/files/search", json=payload)
+    async def list_users(self) -> list[dict]:
+        """List all InHire users for the tenant. Uses auth.inhire.app (not api.inhire.app)."""
+        await self.auth.ensure_valid_token()
+        resp = await self._client.get(
+            "https://auth.inhire.app/users",
+            headers=self.auth.headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def search_file(self, file_id: str, file_category: str = "resumes") -> dict | None:
+        """Search for a file by ID. Requires file_id (DynamoDB key)."""
+        if not file_id:
+            return None
+        try:
+            return await self._request("POST", "/files/search", json={
+                "id": file_id,
+                "fileCategory": file_category,
+            })
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                return None
+            raise
 
     # --- Forms ---
 
