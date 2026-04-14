@@ -513,6 +513,29 @@ class InHireClient:
             "tags": tags,
         })
 
+    # --- AI Search ---
+
+    async def gen_filter_job_talents(self, job_id: str, query: str) -> dict | None:
+        """Generate Typesense filters from natural language using InHire AI.
+        Endpoint: POST /search-talents/ai/generate-job-talent-filter
+        Returns: {filter, sort, query, facetsValuesDoesNotExist} or None on error."""
+        try:
+            return await self._request(
+                "POST", "/search-talents/ai/generate-job-talent-filter",
+                json={"jobId": job_id, "query": query},
+            )
+        except httpx.HTTPStatusError as e:
+            logger.warning("gen_filter_job_talents failed %d: %s", e.response.status_code, e.response.text[:200])
+            return None
+        except Exception as e:
+            logger.warning("gen_filter_job_talents error: %s", e)
+            return None
+
+    async def create_talent(self, data: dict) -> dict:
+        """Create a basic talent record. Used for LinkedIn profiles before full data extraction.
+        data should include at minimum: {name, linkedinUsername} or {name, email}."""
+        return await self._request("POST", "/talents", json=data)
+
     # --- Job Publishing ---
 
     async def get_integrations(self) -> list[dict]:
