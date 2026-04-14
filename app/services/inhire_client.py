@@ -228,6 +228,15 @@ class InHireClient:
             json={"id": file_id, "category": category, "name": file_name},
         )
 
+    async def search_files(self, file_id: str = "", file_category: str = "resumes") -> list[dict]:
+        """Search for files by ID or category. Correct endpoint per André (not GET /talents/{id}/files)."""
+        payload: dict = {}
+        if file_id:
+            payload["id"] = file_id
+        if file_category:
+            payload["fileCategory"] = file_category
+        return await self._request("POST", "/files/search", json=payload)
+
     # --- Forms ---
 
     async def get_job_form(self, job_id: str) -> list[dict]:

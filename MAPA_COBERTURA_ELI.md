@@ -389,9 +389,9 @@ POST /offer-letters/{offerId}/decline
 
 | # | Endpoint | O que falta | Prioridade |
 |---|---|---|---|
-| 1 | Liberar `GET /scorecards` (403) | Permissao do service account | **P1** |
-| 2 | Liberar `GET /users` (403) | Onboarding sem hack | **P1** |
-| 3 | Liberar `GET /talents/{id}/files` (403) | Acesso a CVs | **P2** |
+| 1 | Liberar `GET /scorecards` (403) | Andre vai ajustar role essa semana | **P1** |
+| 2 | Liberar `GET /users` (403) | Andre vai ajustar junto com scorecards | **P1** |
+| 3 | ~~Liberar `GET /talents/{id}/files`~~ | ✅ Rota correta: `POST /files/search` (ja funciona, implementado) | — |
 | 4 | `POST /talent-pools/{poolId}/talents` | Talent pools / silver medalist | **P2** |
 | 5 | `GET /comms/emails/submissions/{jobTalentId}` | Historico de comunicacao por candidato | **P2** |
 | 6 | `POST /offer-letters/{id}/decline` | Registro de recusa com motivo | **P2** |
