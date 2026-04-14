@@ -171,6 +171,25 @@ class InHireClient:
     async def get_scorecards(self, params: dict | None = None) -> list:
         return await self._request("GET", "/scorecards", params=params or {})
 
+    async def get_job_scorecard(self, job_id: str) -> dict | None:
+        """Get scorecard config for a job (skill categories and criteria)."""
+        try:
+            return await self._request("GET", f"/forms/scorecards/jobs/{job_id}")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    async def create_job_scorecard(self, job_id: str, skill_categories: list[dict]) -> dict:
+        """Create scorecard for a job with skill categories.
+
+        skill_categories format: [{"name": "Técnico", "skills": [{"name": "Python"}, {"name": "FastAPI"}]}]
+        """
+        return await self._request("POST", "/forms/scorecards/jobs", json={
+            "jobId": job_id,
+            "skillCategories": skill_categories,
+        })
+
     # --- Webhooks ---
     async def register_webhook(self, url: str, event: str, name: str) -> dict:
         """Register a single webhook. Fields: url, event, name."""
@@ -196,6 +215,26 @@ class InHireClient:
             "POST", "/files",
             json={"id": file_id, "category": category, "name": file_name},
         )
+
+    # --- Forms ---
+
+    async def get_job_form(self, job_id: str) -> list[dict]:
+        """Get application form config for a job. Returns list of form items."""
+        return await self._request(
+            "GET", f"/forms/job-id/{job_id}", params={"includeTypeFileUpload": "true"},
+        )
+
+    async def update_form(self, form_id: str, payload: dict) -> dict:
+        """Update form structure (title, fields, settings)."""
+        return await self._request("PATCH", f"/forms/{form_id}", json=payload)
+
+    async def configure_screening(self, job_id: str, screening_settings: dict,
+                                   resume_analyzer: dict | None = None) -> dict:
+        """Configure AI screening for a job (criteria, salary range, auto-actions)."""
+        payload: dict = {"screeningSettings": screening_settings}
+        if resume_analyzer is not None:
+            payload["resumeAnalyzer"] = resume_analyzer
+        return await self._request("PATCH", f"/jobs/{job_id}", json=payload)
 
     # --- Job Talents (add talent to job) ---
     async def add_talent_to_job(self, job_id: str, talent_data: dict, source: str = "api",
@@ -373,6 +412,36 @@ class InHireClient:
             "GET", "/search-talents/security/key/talents",
             params={"engine": "typesense"},
         )
+
+    # --- Job Publishing ---
+
+    async def get_integrations(self) -> list[dict]:
+        """List publishing integrations configured for the tenant (LinkedIn, Indeed, etc.)."""
+        return await self._request("GET", "/integrations")
+
+    async def publish_job(self, job_id: str, career_page_id: str, display_name: str,
+                          active_job_boards: list[str], description: str = "",
+                          status: str = "published") -> dict:
+        """Publish a job to career page and job boards.
+
+        active_job_boards options: linkedin, indeed, netVagas, talent, ondeTrabalhar, jobBoardPool
+        """
+        payload: dict = {
+            "jobId": job_id,
+            "careerPageId": career_page_id,
+            "displayName": display_name,
+            "status": status,
+            "activeJobBoards": active_job_boards,
+        }
+        if description:
+            payload["description"] = description
+        return await self._request("POST", "/job-posts/pages", json=payload)
+
+    async def unpublish_job(self, job_id: str) -> dict:
+        """Unpublish a job from all channels."""
+        return await self._request("PATCH", f"/job-posts/pages/{job_id}", json={
+            "status": "unpublished",
+        })
 
     async def close(self):
         await self._client.aclose()
