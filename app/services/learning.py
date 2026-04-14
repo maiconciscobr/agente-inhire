@@ -12,6 +12,8 @@ REDIS_PREFIX = "inhire:learning:"
 REDIS_ALERT_LOG_PREFIX = "inhire:alert_log:"
 REDIS_ALERT_STATS_PREFIX = "inhire:alert_stats:"
 ALERT_RESPONSE_WINDOW = 1800  # 30 minutes
+DECISION_TTL = 86400 * 180  # 180 days — decisions expire after 6 months
+ALERT_STATS_TTL = 86400 * 90  # 90 days
 
 
 class LearningService:
@@ -47,7 +49,7 @@ class LearningService:
             # Keep last 100 decisions per job
             if len(decisions) > 100:
                 decisions = decisions[-100:]
-            self._redis.set(key, json.dumps(decisions, default=str))
+            self._redis.setex(key, DECISION_TTL, json.dumps(decisions, default=str))
         except Exception as e:
             logger.warning("Erro ao salvar decisão: %s", e)
 
@@ -217,7 +219,7 @@ class LearningService:
             stats["sent"] += 1
             if responded:
                 stats["responded"] += 1
-            self._redis.set(key, json.dumps(stats))
+            self._redis.setex(key, ALERT_STATS_TTL, json.dumps(stats))
         except Exception as e:
             logger.warning("Erro ao salvar stats de alerta: %s", e)
 

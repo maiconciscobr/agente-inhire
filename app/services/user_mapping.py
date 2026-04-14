@@ -8,6 +8,7 @@ from config import get_settings
 logger = logging.getLogger("agente-inhire.user-mapping")
 
 REDIS_PREFIX = "inhire:user:"
+USER_TTL = 86400 * 365  # 1 year — inactive users cleaned after 12 months
 
 
 class UserMapping:
@@ -63,8 +64,9 @@ class UserMapping:
         self._cache[slack_user_id] = user
         if self._redis:
             try:
-                self._redis.set(
+                self._redis.setex(
                     f"{REDIS_PREFIX}{slack_user_id}",
+                    USER_TTL,
                     json.dumps(user),
                 )
             except Exception as e:
@@ -95,7 +97,7 @@ class UserMapping:
             self._cache[slack_user_id] = user
             if self._redis:
                 try:
-                    self._redis.set(f"{REDIS_PREFIX}{slack_user_id}", json.dumps(user))
+                    self._redis.setex(f"{REDIS_PREFIX}{slack_user_id}", USER_TTL, json.dumps(user))
                 except Exception:
                     pass
 
@@ -111,7 +113,7 @@ class UserMapping:
         self._cache[slack_user_id] = user
         if self._redis:
             try:
-                self._redis.set(f"{REDIS_PREFIX}{slack_user_id}", json.dumps(user))
+                self._redis.setex(f"{REDIS_PREFIX}{slack_user_id}", USER_TTL, json.dumps(user))
             except Exception:
                 pass
 
