@@ -138,6 +138,15 @@ async def _check_candidates(conv, app, channel_id: str, job_id: str, stage_filte
         )
         await _send(conv, slack, channel_id, report)
 
+        # Offer screening for hunting candidates without score
+        hunting_without_score = [c for c in no_score if c.get("id")]
+        if hunting_without_score and len(hunting_without_score) <= 10:
+            await _send(
+                conv, slack, channel_id,
+                f"💡 {len(hunting_without_score)} candidato(s) de hunting sem triagem. "
+                f"Quer que eu dispare a triagem IA pra eles?",
+            )
+
         # Build shortlist: scored candidates first, then unscored active ones
         shortlist = high_fit + medium_fit[:5]  # High fit + top medium
         if not shortlist and no_score:

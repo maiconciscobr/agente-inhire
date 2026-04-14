@@ -330,6 +330,38 @@ async def _job_status_report(conv, app, channel_id: str, job_id: str):
         )
         report += suggestion
 
+        # Calculate time per stage using timeline data
+        try:
+            if applications[:5]:  # Sample first 5 candidates for performance
+                from datetime import datetime, timezone
+                stage_durations: dict[str, list[float]] = {}
+                for app_item in applications[:5]:
+                    jt_id = app_item.get("id", "")
+                    if jt_id:
+                        timeline = await inhire.get_job_talent_timeline(jt_id)
+                        if timeline and len(timeline) >= 2:
+                            for i in range(1, len(timeline)):
+                                prev = timeline[i - 1]
+                                curr = timeline[i]
+                                stage_name = prev.get("stage", {}).get("name", "") if isinstance(prev.get("stage"), dict) else ""
+                                if stage_name:
+                                    try:
+                                        t1 = datetime.fromisoformat(prev.get("createdAt", "").replace("Z", "+00:00"))
+                                        t2 = datetime.fromisoformat(curr.get("createdAt", "").replace("Z", "+00:00"))
+                                        days = (t2 - t1).total_seconds() / 86400
+                                        stage_durations.setdefault(stage_name, []).append(days)
+                                    except Exception:
+                                        pass
+
+                if stage_durations:
+                    duration_lines = ["\n*Tempo médio por etapa:*"]
+                    for stage_name, durations in stage_durations.items():
+                        avg = sum(durations) / len(durations)
+                        duration_lines.append(f"  {stage_name}: {avg:.1f} dias (amostra: {len(durations)})")
+                    report += "\n".join(duration_lines)
+        except Exception as e:
+            logger.warning("Erro ao calcular tempo por etapa: %s", e)
+
         # AI-powered closing prediction
         try:
             if applications and stages:
