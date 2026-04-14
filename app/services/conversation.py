@@ -74,7 +74,23 @@ class Conversation:
             ]
             self.msgs_since_summary = 0
 
+    # Keys that are specific to a job flow and should be cleared when switching jobs
+    _JOB_CONTEXT_KEYS = {
+        "current_job_name", "job_stages", "job_data", "job_description",
+        "shortlist_candidates", "all_applications", "shortlist_summary",
+        "next_stage_id", "next_stage_name", "candidates_to_reject",
+        "offer_templates", "offer_candidates", "offer_details",
+        "schedulable_candidates", "scheduling_job_talent_id",
+        "briefing_parts", "analyzed_profile_data", "analyzed_profile_text",
+        "whatsapp_pending", "whatsapp_rejection_pending",
+        "whatsapp_move_pending", "whatsapp_interview_pending",
+    }
+
     def set_context(self, key: str, value):
+        # When switching to a different job, clear stale context from previous job
+        if key == "current_job_id" and value != self.context.get("current_job_id"):
+            for k in self._JOB_CONTEXT_KEYS:
+                self.context.pop(k, None)
         self.context[key] = value
 
     def get_context(self, key: str, default=None):
