@@ -306,6 +306,46 @@ def _should_auto_approve(user: dict, action: str, learning=None, recruiter_id: s
     return False
 
 
+async def _send_with_undo(conv, slack, channel_id: str, text: str, undo_callback_id: str):
+    """Send message with an inline [Desfazer] button (for auto-actions in autopilot)."""
+    conv.add_message("assistant", text)
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Desfazer"},
+                "value": undo_callback_id,
+                "action_id": "adjust",
+            }],
+        },
+    ]
+    await slack.send_message(channel_id, text, blocks=blocks)
+
+
+async def _request_or_auto_approve(conv, app, channel_id: str, action: str,
+                                    title: str, details: str, callback_id: str,
+                                    execute_fn, flow_state=None):
+    """Wrapper: auto-execute or request approval based on autonomy mode.
+
+    If auto-approved: executes immediately, logs to audit, sends notification with undo.
+    If not: sends approval request and sets FlowState.
+    """
+    user = app.state.user_mapping.get_user(conv.user_id) or {}
+    learning = getattr(app.state, "learning", None)
+
+    if _should_auto_approve(user, action, learning=learning, recruiter_id=conv.user_id):
+        await execute_fn()
+        if hasattr(app.state, "audit_log"):
+            app.state.audit_log.log_action(conv.user_id, action,
+                                            conv.get_context("current_job_id", ""))
+    else:
+        await _send_approval(conv, app.state.slack, channel_id, title, details, callback_id)
+        if flow_state:
+            conv.state = flow_state
+
+
 def _is_muted(user: dict) -> bool:
     """Check if recruiter has muted notifications.
     Returns True if muted (skip sending proactive messages)."""
