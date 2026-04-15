@@ -360,3 +360,213 @@ class TestIsMuted:
         from datetime import datetime, timedelta, timezone
         past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         assert _is_muted({"muted_until": past}) is False
+
+
+class TestOfferFlow:
+    @pytest.mark.asyncio
+    async def test_start_offer_no_job_id(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _start_offer_flow
+        # No job_id in context — _context starts empty
+        await _start_offer_flow(mock_conv, mock_app, "C123", "oferta")
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "qual vaga" in last_msg.lower() or "ID" in last_msg
+
+    @pytest.mark.asyncio
+    async def test_start_offer_no_eligible_candidates(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _start_offer_flow
+        mock_conv._context["current_job_id"] = "job-1"
+        mock_conv._context["current_job_name"] = "Dev Python"
+        # All candidates rejected — none eligible
+        mock_app.state.inhire.list_job_talents.return_value = [
+            {"id": "jt-1", "status": "rejected", "talent": {"name": "Ana"}},
+        ]
+        await _start_offer_flow(mock_conv, mock_app, "C123", "oferta")
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "nenhum" in last_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_start_offer_shows_candidates_and_templates(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _start_offer_flow
+        from services.conversation import FlowState
+        mock_conv._context["current_job_id"] = "job-1"
+        mock_conv._context["current_job_name"] = "Dev Python"
+        # One active, one rejected
+        mock_app.state.inhire.list_job_talents.return_value = [
+            {"id": "jt-1", "status": "active", "talent": {"name": "Ana Silva"}, "stage": {"name": "Offer"}},
+            {"id": "jt-2", "status": "rejected", "talent": {"name": "Pedro"}},
+        ]
+        mock_app.state.inhire.list_offer_templates.return_value = [{"id": "tpl-1", "name": "CLT Padrão"}]
+        mock_app.state.inhire.get_offer_template_detail.return_value = {"variables": [{"name": "salario"}]}
+
+        await _start_offer_flow(mock_conv, mock_app, "C123", "oferta")
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "Ana Silva" in last_msg
+        assert "CLT" in last_msg
+        assert mock_conv.state == FlowState.CREATING_OFFER
+
+
+class TestRejectionFlow:
+    @pytest.mark.asyncio
+    async def test_reject_no_candidates(self, mock_conv, mock_app):
+        from routers.handlers.candidates import _reject_candidates
+        from services.conversation import FlowState
+        # No candidates in context
+        await _reject_candidates(mock_conv, mock_app, "C123")
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "ninguém" in last_msg.lower() or "não tem" in last_msg.lower()
+        assert mock_conv.state == FlowState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_reject_calls_bulk_reject(self, mock_conv, mock_app):
+        from routers.handlers.candidates import _reject_candidates
+        mock_conv._context["candidates_to_reject"] = [
+            {"id": "jt-1", "name": "Ana", "score": "3.0", "stage": "Triagem", "location": "SP"},
+            {"id": "jt-2", "name": "Pedro", "score": "2.5", "stage": "Triagem", "location": "RJ"},
+        ]
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_app.state.claude.generate_rejection_message.return_value = "Devolutiva profissional"
+        mock_app.state.claude.classify_rejection_reason.return_value = "underqualified"
+        mock_app.state.inhire.bulk_reject.return_value = {"rejected": 2, "total": 2}
+        mock_app.state.user_mapping.get_user.return_value = {"comms_enabled": False}
+
+        await _reject_candidates(mock_conv, mock_app, "C123")
+
+        mock_app.state.inhire.bulk_reject.assert_called()
+        assert mock_app.state.claude.classify_rejection_reason.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reject_offers_whatsapp_if_phone_available(self, mock_conv, mock_app):
+        from routers.handlers.candidates import _reject_candidates
+        mock_conv._context["candidates_to_reject"] = [
+            {"id": "jt-1", "name": "Ana", "talent": {"phone": "+5511999990001"}, "score": "3.0", "stage": "Triagem"},
+        ]
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_app.state.claude.generate_rejection_message.return_value = "Devolutiva"
+        mock_app.state.claude.classify_rejection_reason.return_value = "underqualified"
+        mock_app.state.claude.generate_personalized_rejection.return_value = "Mensagem personalizada"
+        mock_app.state.inhire.bulk_reject.return_value = {"rejected": 1, "total": 1}
+        mock_app.state.user_mapping.get_user.return_value = {"comms_enabled": True}
+
+        await _reject_candidates(mock_conv, mock_app, "C123")
+
+        # Should offer WhatsApp approval via send_approval_request
+        mock_app.state.slack.send_approval_request.assert_called_once()
+        call_args = mock_app.state.slack.send_approval_request.call_args[0]
+        assert "WhatsApp" in call_args[1]
+
+
+class TestInterviewScheduling:
+    @pytest.mark.asyncio
+    async def test_propose_with_preferred_slots(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _propose_interview_times
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_app.state.user_mapping.get_user.return_value = {
+            "preferred_interview_slots": [{"day": "tue", "hour": 14}, {"day": "thu", "hour": 10}],
+            "default_interview_duration": 60,
+        }
+        candidates = [
+            {"id": "jt-1", "talent": {"name": "Ana Silva"}},
+            {"id": "jt-2", "talent": {"name": "Pedro Santos"}},
+        ]
+        await _propose_interview_times(mock_conv, mock_app, "C123", candidates)
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "Ana Silva" in last_msg
+        assert "agende assim" in last_msg.lower() or "horários" in last_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_propose_without_slots_asks_recruiter(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _propose_interview_times
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_app.state.user_mapping.get_user.return_value = {
+            "preferred_interview_slots": [],
+        }
+        candidates = [
+            {"id": "jt-1", "talent": {"name": "Ana Silva"}},
+        ]
+        await _propose_interview_times(mock_conv, mock_app, "C123", candidates)
+        last_msg = mock_app.state.slack.send_message.call_args[0][1]
+        assert "horários preferidos" in last_msg.lower() or "melhores horários" in last_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_propose_empty_candidates(self, mock_conv, mock_app):
+        from routers.handlers.interviews import _propose_interview_times
+        mock_app.state.user_mapping.get_user.return_value = {"preferred_interview_slots": []}
+        await _propose_interview_times(mock_conv, mock_app, "C123", [])
+        # Should not send any message
+        mock_app.state.slack.send_message.assert_not_called()
+
+
+def _import_webhooks():
+    """Import routers.webhooks, mocking fastapi if it's not installed."""
+    import sys
+    import importlib
+    from unittest.mock import MagicMock
+
+    # Stub fastapi if not available (unit-test environment without full deps)
+    if "fastapi" not in sys.modules:
+        fastapi_stub = MagicMock()
+        fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
+        fastapi_stub.Request = MagicMock
+        fastapi_stub.Response = MagicMock
+        sys.modules["fastapi"] = fastapi_stub
+
+    # Force a fresh import if module is not yet loaded
+    if "routers.webhooks" not in sys.modules:
+        importlib.import_module("routers.webhooks")
+
+    return sys.modules["routers.webhooks"]
+
+
+class TestWebhookDetection:
+    def test_detect_talent_added(self):
+        webhooks = _import_webhooks()
+        body = {"talentId": "t1", "jobId": "j1", "stageName": "Listados"}
+        assert webhooks._detect_event_type(body) == "JOB_TALENT_ADDED"
+
+    def test_detect_requisition_approved(self):
+        webhooks = _import_webhooks()
+        body = {"requisitionId": "r1", "approvers": [], "status": "approved"}
+        assert webhooks._detect_event_type(body) == "REQUISITION_STATUS_UPDATED"
+
+    def test_detect_form_response(self):
+        webhooks = _import_webhooks()
+        body = {"formId": "f1", "formResponseId": "fr1"}
+        assert webhooks._detect_event_type(body) == "FORM_RESPONSE_ADDED"
+
+    def test_detect_job_updated(self):
+        webhooks = _import_webhooks()
+        body = {"jobId": "j1", "name": "Dev Python"}
+        assert webhooks._detect_event_type(body) == "JOB_UPDATED"
+
+    def test_detect_unknown(self):
+        webhooks = _import_webhooks()
+        body = {"random": "data"}
+        assert webhooks._detect_event_type(body) == "UNKNOWN"
+
+
+class TestWebhookAutoScreening:
+    @pytest.mark.asyncio
+    async def test_auto_screen_hunting_candidate(self, mock_app):
+        webhooks = _import_webhooks()
+        mock_app.state.inhire.manual_screening.return_value = {"score": 4.0}
+
+        payload = {"jobId": "j1", "talentId": "t1", "source": "manual", "stageName": "Listados"}
+        await webhooks._handle_talent_added(mock_app, payload)
+
+        # Give the background task a moment (it's create_task)
+        import asyncio
+        await asyncio.sleep(0.1)
+        # manual_screening should have been called
+        mock_app.state.inhire.manual_screening.assert_called_once_with("j1*t1")
+
+    @pytest.mark.asyncio
+    async def test_organic_candidate_not_screened(self, mock_app):
+        webhooks = _import_webhooks()
+
+        payload = {"jobId": "j1", "talentId": "t1", "source": "jobPage", "stageName": "Inscritos"}
+        await webhooks._handle_talent_added(mock_app, payload)
+
+        import asyncio
+        await asyncio.sleep(0.1)
+        # Should NOT auto-screen organic candidates
+        mock_app.state.inhire.manual_screening.assert_not_called()
