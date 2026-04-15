@@ -49,6 +49,19 @@ class UserMapping:
         "stale_threshold_days": 3,
         "reminder_interval_days": 7,
         "comms_enabled": True,
+        # Autonomy
+        "autonomy_mode": "copilot",
+        "auto_advance_threshold": 4.0,
+        # Entrevistas
+        "preferred_interview_slots": [],
+        "default_interview_duration": 60,
+        # Follow-up
+        "followup_intensity": "normal",
+        # Notifications
+        "realtime_notifications": True,
+        "daily_briefing": True,
+        "notification_mode": "realtime",
+        "muted_until": None,
     }
 
     def register_user(self, slack_user_id: str, inhire_email: str, inhire_name: str,

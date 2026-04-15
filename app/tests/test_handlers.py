@@ -204,3 +204,18 @@ class TestToolDefinitions:
         from services.claude_client import ELI_TOOLS
 
         assert ELI_TOOLS[-1]["name"] == "conversa_livre"
+
+
+class TestAutonomySettings:
+    def test_default_settings_include_autonomy(self):
+        from services.user_mapping import UserMapping
+        defaults = UserMapping.DEFAULT_SETTINGS
+        assert defaults["autonomy_mode"] == "copilot"
+        assert defaults["auto_advance_threshold"] == 4.0
+        assert defaults["followup_intensity"] == "normal"
+        assert defaults["realtime_notifications"] is True
+        assert defaults["daily_briefing"] is True
+        assert defaults["preferred_interview_slots"] == []
+        assert defaults["default_interview_duration"] == 60
+        assert defaults["notification_mode"] == "realtime"
+        assert defaults["muted_until"] is None
