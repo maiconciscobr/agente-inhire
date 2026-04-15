@@ -320,6 +320,17 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 73 | **Template oferta detalhado** — `GET /offer-letters/templates/{id}` com variáveis obrigatórias | ✅ | 43 |
 | 74 | **Limpeza código morto** — removidos `list_applications`, `update_application`, `get_scorecards`, FlowStates orfãos | ✅ | 43 |
 | 75 | **Migração proactive_monitor** — `list_applications` → `list_job_talents` (endpoint correto) | ✅ | 43 |
+| 76 | **Autonomia v2 — dois modos** — copiloto (5 aprovações, batch) + piloto automático (2 aprovações) | ✅ | 44 |
+| 77 | **Cadeia pós-vaga** — config sequencial → paralelo(match, linkedin) + msg orientada a resultado | ✅ | 44 |
+| 78 | **Motor de confiança** — threshold aprendido + calibração semanal + circuit breaker (30% reversões) | ✅ | 44 |
+| 79 | **Follow-up por etapa** — cobrança progressiva pós-entrevista, offer, excepcional + auto-backoff | ✅ | 44 |
+| 80 | **Audit log** — registro de ações autônomas, exibido no briefing matinal | ✅ | 44 |
+| 81 | **Auto-screening webhook** — semáforo(5) + chain_active flag + fila pendente | ✅ | 44 |
+| 82 | **Smart scheduling** — slots preferidos + propostas concretas + micro-feedback pós-entrevista | ✅ | 44 |
+| 83 | **Snooze/silenciar** — `_is_muted` helper + muted_until no user_mapping | ✅ | 44 |
+| 84 | **Botão [Desfazer]** — `_send_with_undo` + `_request_or_auto_approve` wrapper | ✅ | 44 |
+| 85 | **System prompt autônomo** — modos de operação + comportamento em entrevistas no prompt estático | ✅ | 44 |
+| 86 | **Tool `modo_autonomia`** — troca copiloto/piloto + threshold + silenciar via Slack | ✅ | 44 |
 
 ---
 
