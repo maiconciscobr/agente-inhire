@@ -68,40 +68,85 @@ Eli Autonomia v2 — transformar de assistente reativo (13 aprovações) em agen
 - RIPD necessário antes de produção
 - DPA com Anthropic para transferência internacional
 
-### O que ficou pendente (sem créditos Anthropic)
+### Implementações fase 2 (créditos recarregados)
 
-| Item | Status | O que falta |
-|---|---|---|
-| Briefing two-tier (curto + expandível) | Parcial | Briefing atualizado com audit log, mas formato ainda não é two-tier com botão [Ver detalhes] |
-| Batch approval no copiloto | Spec pronto | Agrupar 3+ ações em 1 clique — `_request_or_auto_approve` está pronto, falta integrar nos handlers |
-| Integração `_request_or_auto_approve` nos handlers | Spec pronto | Substituir `_send_approval` direto por wrapper nos handlers de candidates.py e slack.py |
-| Testes E2E das novas features | Não testado | Requer créditos Anthropic + servidor rodando |
-| Deploy no servidor | Não feito | SCP + restart systemd |
+**Briefing two-tier:** Implementado — briefing curto (5-7 linhas) + "Responda *detalhes* pra ver relatório completo". Handler "detalhes" adicionado no slack.py.
 
-### Arquivos modificados nesta sessão (branch feature/autonomy-v2)
+**Integração `_request_or_auto_approve` nos handlers:**
+- Shortlist (candidates.py) — autopilot move direto, copilot pede aprovação
+- Publish (job_creation.py) — autopilot publica direto
+- WhatsApp (slack.py) — autopilot envia direto
+- Reject e offer mantêm aprovação humana sempre
+
+**22 testes novos cobrindo 6 gaps críticos (90 total):**
+- TestOfferFlow (3): sem job, sem candidatos, com templates
+- TestRejectionFlow (3): sem candidatos, bulk_reject, WhatsApp devolutiva
+- TestInterviewScheduling (3): com slots, sem slots, lista vazia
+- TestWebhookDetection (5) + TestWebhookAutoScreening (2): 5 tipos de payload + hunting vs orgânico
+- TestRequestOrAutoApprove (5): copilot, autopilot, circuit breaker, reject, whatsapp
+- TestSendWithUndo (1): botão Desfazer nos blocks
+
+**Autonomia por vaga + sugestão inteligente de modo:**
+- Modo é PER JOB (Redis `inhire:job_mode:{user}:{job}`)
+- `_suggest_autonomy_mode()` analisa: urgência, senioridade, salário, requisitos, histórico
+- Autopilot sugerido: urgência alta + requisitos claros + recrutador experiente (15+ decisões)
+- Copilot sugerido: liderança/C-level + salário alto + recrutador novo (< 15 decisões)
+- < 15 decisões → SEMPRE copilot (override de segurança)
+- TestSuggestAutonomyMode (4 testes)
+
+**Fix LinkedIn search vazia:** terms vazios filtrados corretamente agora.
+
+**Deploy + testes E2E via Slack (MCP):**
+
+| Teste | Resultado |
+|---|---|
+| Eli responde mensagens | ✅ |
+| Trocar pra modo piloto automático | ✅ resposta clara com detalhes |
+| Criar vaga (briefing → extração → JD) | ✅ JD profissional gerada |
+| Aprovar vaga (botão) | ✅ cria no InHire |
+| Cadeia pós-criação | ✅ config + match + LinkedIn |
+| Sugestão inteligente de modo | ✅ sugeriu copilot (poucos dados) |
+| Autonomia por vaga | ✅ modo salvo por job_id |
+| String LinkedIn corrigida | ✅ era `()`, agora `("Diretor de Engenharia")` |
+
+### Arquivos modificados nesta sessão
 
 - `app/services/user_mapping.py` — +9 campos autonomia
 - `app/services/audit_log.py` — NOVO (97 linhas)
-- `app/services/learning.py` — +108 linhas (confidence engine)
+- `app/services/learning.py` — +108 linhas (confidence engine + circuit breaker)
 - `app/services/claude_client.py` — tool modo_autonomia + system prompt modos
-- `app/services/proactive_monitor.py` — stage follow-ups + audit log no briefing
-- `app/routers/handlers/helpers.py` — 4 novos helpers (_should_auto_approve, _is_muted, _send_with_undo, _request_or_auto_approve)
-- `app/routers/handlers/job_creation.py` — _post_creation_chain
+- `app/services/proactive_monitor.py` — stage follow-ups + audit log no briefing + two-tier
+- `app/routers/handlers/helpers.py` — _should_auto_approve, _is_muted, _send_with_undo, _request_or_auto_approve
+- `app/routers/handlers/job_creation.py` — _post_creation_chain + _suggest_autonomy_mode + _get/_set_job_mode
 - `app/routers/handlers/interviews.py` — _propose_interview_times, _send_micro_feedback, slot learning
-- `app/routers/slack.py` — handler modo_autonomia, interview proposals pós-shortlist, post-creation chain
+- `app/routers/handlers/candidates.py` — integração _request_or_auto_approve no shortlist
+- `app/routers/slack.py` — modo_autonomia handler (per-job), interview proposals, two-tier "detalhes"
 - `app/routers/webhooks.py` — auto-screening + semáforo + chain flag + stage_changed
 - `app/main.py` — inicializa AuditLog
-- `app/tests/` — +36 testes (70 total)
+- `app/tests/` — 90 testes (era 34 no início da sessão)
 - `CLAUDE.md` — melhorias 76-86
 - `docs/superpowers/specs/` — design spec v2 (revisado por 4 especialistas)
 - `docs/superpowers/plans/` — plano de 16 tasks
 
 ### Decisões técnicas
 - **Dois modos, não três:** usuário pediu binário (copiloto/piloto). Batch approval incorporado no copiloto.
-- **Comunicação externa auto no piloto:** usuário pediu explicitamente, contra recomendação de 2 especialistas. Mitigado com templates + rodapé IA.
+- **Comunicação externa auto no piloto:** usuário pediu explicitamente, contra recomendação de 2 especialistas.
 - **Circuit breaker em vez de gate fixo:** mais robusto que threshold estático — detecta problemas em tempo real.
 - **Chain sequencial→paralelo:** config DEVE completar antes de match/screening (race condition real).
-- **Subagent-driven development:** 13 tasks via subagents, 1 implementada direto (créditos acabaram).
+- **Autonomia por vaga, não global:** recrutador pode ter vagas diferentes com modos diferentes. Eli sugere o modo baseado na vaga.
+- **< 15 decisões → sempre copilot:** segurança — motor de confiança precisa de dados.
+- **Subagent-driven development:** 13 tasks via subagents, 3 implementadas direto.
+
+### Pendente (sessão 45 — 16 de abril)
+
+| Item | Esforço |
+|---|---|
+| Testar silenciar ("Eli, silencia") E2E | 15min |
+| Testar micro-feedback pós-entrevista E2E | 30min |
+| Testar auto-screening webhook com candidato real | 30min |
+| Testar circuit breaker com reversões reais | 30min |
+| Batch approval visual (bloco [Confirma tudo]) | 3h |
+| Auto-backoff de follow-ups | 2h |
 
 ---
 
