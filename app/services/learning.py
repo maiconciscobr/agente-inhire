@@ -238,3 +238,119 @@ class LearningService:
         except Exception as e:
             logger.warning("Erro ao buscar stats de alertas: %s", e)
         return results
+
+    # --- Confidence engine (auto-advance threshold) ---
+
+    CONFIDENCE_PREFIX = "inhire:confidence:"
+    CONFIDENCE_TTL = 86400 * 365  # 1 year
+
+    def _default_confidence(self) -> dict:
+        return {
+            "auto_advance_threshold": 4.0,
+            "learned_threshold": None,
+            "decisions_count": 0,
+            "approval_rate_above_threshold": 0.0,
+            "reversals_count": 0,
+            "reversals_recent": 0,
+            "auto_advances_recent": 0,
+            "last_calibration": None,
+            "circuit_breaker_active": False,
+        }
+
+    def get_confidence(self, recruiter_id: str) -> dict:
+        """Get confidence data for a recruiter."""
+        if not self._redis:
+            return self._default_confidence()
+        try:
+            raw = self._redis.get(f"{self.CONFIDENCE_PREFIX}{recruiter_id}")
+            if raw:
+                data = self._default_confidence()
+                data.update(json.loads(raw))
+                return data
+        except Exception as e:
+            logger.warning("Erro ao buscar confidence: %s", e)
+        return self._default_confidence()
+
+    def _save_confidence(self, recruiter_id: str, data: dict):
+        if not self._redis:
+            return
+        try:
+            self._redis.setex(
+                f"{self.CONFIDENCE_PREFIX}{recruiter_id}",
+                self.CONFIDENCE_TTL,
+                json.dumps(data, default=str),
+            )
+        except Exception as e:
+            logger.warning("Erro ao salvar confidence: %s", e)
+
+    def set_threshold(self, recruiter_id: str, threshold: float):
+        """Manually set auto-advance threshold."""
+        data = self.get_confidence(recruiter_id)
+        data["auto_advance_threshold"] = max(0.0, min(5.0, threshold))
+        self._save_confidence(recruiter_id, data)
+
+    def record_reversal(self, recruiter_id: str):
+        """Record that the recruiter reversed an auto-advance decision."""
+        data = self.get_confidence(recruiter_id)
+        data["reversals_count"] = data.get("reversals_count", 0) + 1
+        data["reversals_recent"] = data.get("reversals_recent", 0) + 1
+        self._save_confidence(recruiter_id, data)
+        logger.info("Reversal recorded for %s (total: %d)", recruiter_id, data["reversals_count"])
+
+    def record_auto_advance(self, recruiter_id: str):
+        """Record that an auto-advance happened."""
+        data = self.get_confidence(recruiter_id)
+        data["auto_advances_recent"] = data.get("auto_advances_recent", 0) + 1
+        self._save_confidence(recruiter_id, data)
+
+    def should_auto_advance(self, recruiter_id: str, candidate_score: float) -> bool:
+        """Check if a candidate should be auto-advanced based on score threshold."""
+        data = self.get_confidence(recruiter_id)
+        threshold = data.get("auto_advance_threshold", 4.0)
+        return candidate_score >= threshold
+
+    def check_circuit_breaker(self, recruiter_id: str) -> bool:
+        """Returns True if circuit breaker is active (auto-advance should be disabled).
+        Activates if >30% of recent auto-advances were reversed (min 5 advances)."""
+        data = self.get_confidence(recruiter_id)
+        if data.get("circuit_breaker_active", False):
+            return True
+        recent_advances = data.get("auto_advances_recent", 0)
+        recent_reversals = data.get("reversals_recent", 0)
+        if recent_advances >= 5 and recent_reversals / max(recent_advances, 1) > 0.3:
+            data["circuit_breaker_active"] = True
+            self._save_confidence(recruiter_id, data)
+            return True
+        return False
+
+    def reset_circuit_breaker(self, recruiter_id: str):
+        """Reset circuit breaker (called by recruiter or weekly calibration)."""
+        data = self.get_confidence(recruiter_id)
+        data["circuit_breaker_active"] = False
+        data["reversals_recent"] = 0
+        data["auto_advances_recent"] = 0
+        self._save_confidence(recruiter_id, data)
+
+    def calibrate(self, recruiter_id: str):
+        """Recalculate confidence from decision history. Called weekly by cron."""
+        all_patterns = self.get_all_patterns(recruiter_id)
+        if not all_patterns:
+            return
+
+        data = self.get_confidence(recruiter_id)
+        total_decisions = sum(
+            entry.get("patterns", {}).get("total_decisions", 0)
+            for entry in all_patterns
+        )
+        data["decisions_count"] = total_decisions
+
+        # Bump threshold if too many reversals
+        if data.get("reversals_count", 0) >= 3:
+            current = data.get("auto_advance_threshold", 4.0)
+            data["auto_advance_threshold"] = min(5.0, current + 0.3)
+            data["reversals_count"] = 0
+
+        data["last_calibration"] = time.strftime("%Y-%m-%d")
+        data["reversals_recent"] = 0
+        data["auto_advances_recent"] = 0
+        self._save_confidence(recruiter_id, data)
