@@ -1085,7 +1085,214 @@ git commit -m "feat: stage-specific follow-ups (interview feedback, offer, excep
 
 ---
 
-### Task 9: Enhanced Daily Briefing with Audit Log
+### Task 9: Smart Interview Scheduling
+
+**Files:**
+- Modify: `app/services/user_mapping.py:43-65`
+- Modify: `app/routers/handlers/interviews.py`
+- Modify: `app/routers/slack.py` (shortlist_approval handler)
+
+- [ ] **Step 1: Add interview scheduling fields to user_mapping**
+
+In `app/services/user_mapping.py`, add to `DEFAULT_SETTINGS`:
+
+```python
+        # Entrevistas
+        "preferred_interview_slots": [],    # [{"day": "tue", "hour": 14}, ...]
+        "default_interview_duration": 60,   # minutes
+```
+
+- [ ] **Step 2: Add `_propose_interview_times` helper to interviews.py**
+
+Add at the end of `app/routers/handlers/interviews.py`:
+
+```python
+async def _propose_interview_times(conv, app, channel_id: str, candidates: list[dict]):
+    """Proactively propose interview times for shortlisted candidates.
+    Checks recruiter's preferred slots and availability, then presents options."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+    user_mapping = app.state.user_mapping
+
+    user = user_mapping.get_user(conv.user_id) or {}
+    preferred_slots = user.get("preferred_interview_slots", [])
+    duration = user.get("default_interview_duration", 60)
+    job_name = conv.get_context("current_job_name", "")
+
+    if not candidates:
+        return
+
+    # Try to check availability via InHire
+    try:
+        availability = await inhire.check_availability()
+    except Exception:
+        availability = {}
+
+    from datetime import datetime, timedelta, timezone as tz
+    now = datetime.now(tz(timedelta(hours=-3)))  # BRT
+
+    if preferred_slots:
+        # Build concrete proposals from preferred slots
+        proposals = []
+        day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4}
+        for slot in preferred_slots[:5]:
+            day_name = slot.get("day", "")
+            hour = slot.get("hour", 14)
+            day_num = day_map.get(day_name.lower()[:3], -1)
+            if day_num < 0:
+                continue
+            # Find next occurrence of this weekday
+            days_ahead = day_num - now.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            target = now + timedelta(days=days_ahead)
+            target = target.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if target > now + timedelta(hours=2):  # At least 2h from now
+                proposals.append(target)
+
+        if proposals:
+            proposals.sort()
+            msg = f"🎯 *Entrevistas — {job_name}*\n\n"
+            msg += f"{len(candidates)} candidato(s) prontos. "
+            msg += "Com base nos seus horários preferidos, sugiro:\n\n"
+
+            for i, (cand, prop) in enumerate(zip(candidates[:len(proposals)], proposals)):
+                talent = cand.get("talent", {}) or {}
+                name = talent.get("name", "?")
+                day_br = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][prop.weekday()]
+                msg += f"  {i+1}. *{name}* — {day_br} {prop.strftime('%d/%m')} às {prop.strftime('%Hh')}\n"
+
+            remaining = len(candidates) - len(proposals)
+            if remaining > 0:
+                msg += f"\n  (+{remaining} candidato(s) sem horário sugerido)\n"
+
+            msg += "\nQuer que eu agende assim, ou prefere outros horários?"
+            await _send(conv, slack, channel_id, msg)
+
+            # Save proposals in context for quick confirmation
+            conv.set_context("pending_interview_proposals", [
+                {"candidate_id": c.get("id"), "candidate_name": (c.get("talent") or {}).get("name", "?"),
+                 "proposed_time": p.isoformat()}
+                for c, p in zip(candidates[:len(proposals)], proposals)
+            ])
+            return
+
+    # No preferred slots — ask the recruiter
+    names = [((c.get("talent") or {}).get("name", "?")) for c in candidates[:5]]
+    names_text = ", ".join(names[:3])
+    if len(names) > 3:
+        names_text += f" e mais {len(names) - 3}"
+
+    msg = (
+        f"🎯 *{names_text}* estão prontos pra entrevista na vaga *{job_name}*!\n\n"
+        f"Quais são seus melhores horários essa semana?\n"
+        f"(Ex: \"terça e quinta às 14h\", \"amanhã 10h\")\n\n"
+        f"💡 Se me disser seus horários preferidos, da próxima vez eu já sugiro direto."
+    )
+    await _send(conv, slack, channel_id, msg)
+
+
+async def _send_micro_feedback(conv, app, channel_id: str, candidate_name: str,
+                                job_talent_id: str, job_name: str):
+    """Send micro-feedback buttons after an interview is expected to have ended."""
+    slack = app.state.slack
+
+    msg = (
+        f"Como foi a entrevista com *{candidate_name}*? 🎯\n\n"
+        f"Reação rápida (posso detalhar depois):"
+    )
+
+    # Send as Slack blocks with action buttons
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": msg}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "👍 Avançar"},
+                    "style": "primary",
+                    "value": f"micro_feedback_advance:{job_talent_id}",
+                    "action_id": "approve",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "🤷 Talvez"},
+                    "value": f"micro_feedback_maybe:{job_talent_id}",
+                    "action_id": "adjust",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "👎 Não avançar"},
+                    "style": "danger",
+                    "value": f"micro_feedback_reject:{job_talent_id}",
+                    "action_id": "reject",
+                },
+            ],
+        },
+    ]
+
+    conv.add_message("assistant", msg)
+    conv.set_context("micro_feedback_candidate", {
+        "job_talent_id": job_talent_id,
+        "candidate_name": candidate_name,
+        "job_name": job_name,
+    })
+    await slack.send_message(channel_id, msg, blocks=blocks)
+```
+
+- [ ] **Step 3: Wire interview proposals into shortlist approval**
+
+In `app/routers/slack.py`, inside the `shortlist_approval` handler (line ~1414), after `_move_approved_candidates` succeeds, add:
+
+```python
+            if action_id == "approve":
+                await _move_approved_candidates(conv, app, channel_id)
+                # Proactively propose interviews for moved candidates
+                moved = conv.get_context("shortlist_candidates", [])
+                if moved:
+                    from routers.handlers.interviews import _propose_interview_times
+                    await _propose_interview_times(conv, app, channel_id, moved)
+```
+
+- [ ] **Step 4: Learn preferred slots when recruiter provides them**
+
+In `app/routers/handlers/interviews.py`, inside `_handle_scheduling_input`, after a successful scheduling, add slot learning:
+
+```python
+        # Learn preferred slot if not already known
+        user = app.state.user_mapping.get_user(conv.user_id) or {}
+        if not user.get("preferred_interview_slots"):
+            # Extract day/hour from scheduled appointment
+            from datetime import datetime
+            try:
+                dt = datetime.fromisoformat(appointment_payload["startDateTime"].replace("Z", ""))
+                day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                learned_slot = {"day": day_names[dt.weekday()], "hour": dt.hour}
+                app.state.user_mapping.update_settings(
+                    conv.user_id,
+                    preferred_interview_slots=[learned_slot],
+                )
+                logger.info("Learned interview slot for %s: %s", conv.user_id, learned_slot)
+            except Exception:
+                pass
+```
+
+- [ ] **Step 5: Verify compilation**
+
+Run: `cd app && python -m py_compile routers/handlers/interviews.py && python -m py_compile routers/slack.py && echo OK`
+Expected: OK
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/services/user_mapping.py app/routers/handlers/interviews.py app/routers/slack.py
+git commit -m "feat: smart interview scheduling (preferred slots, proposals, micro-feedback)"
+```
+
+---
+
+### Task 10: Enhanced Daily Briefing with Audit Log (was Task 9)
 
 **Files:**
 - Modify: `app/services/proactive_monitor.py` (method `_send_user_briefing`)
@@ -1132,7 +1339,7 @@ git commit -m "feat: enhanced daily briefing with audit log (what Eli did autono
 
 ---
 
-### Task 10: Update SYSTEM_PROMPT with Autonomy Awareness
+### Task 11: Update SYSTEM_PROMPT with Autonomy Awareness
 
 **Files:**
 - Modify: `app/services/claude_client.py`
@@ -1145,9 +1352,15 @@ In `SYSTEM_PROMPT_STATIC`, after the `PONTOS DE PAUSA` section, add:
 MODOS DE OPERAÇÃO:
 O recrutador pode operar em dois modos:
 - *Copiloto* (padrão): Você faz tudo automaticamente (config, busca, screening, shortlist) e pede aprovação para: divulgar vaga, mover candidatos, reprovar, comunicar candidato, enviar oferta.
-- *Piloto Automático*: Igual ao copiloto, mas também divulga vagas e move candidatos automaticamente (score acima do threshold). Só pede aprovação para: reprovar, comunicar candidato, enviar oferta.
+- *Piloto Automático*: Máxima autonomia. Divulga vagas, move candidatos, comunica candidatos (WhatsApp/email) — tudo sozinho. Só pede aprovação para: reprovar candidatos e enviar carta oferta.
 
 O recrutador troca de modo dizendo "modo piloto automático" ou "modo copiloto".
+
+COMPORTAMENTO EM ENTREVISTAS:
+- Após shortlist aprovado, proponha horários de entrevista concretos baseados nos slots preferidos do recrutador
+- Se não sabe os slots, pergunte uma vez e salve pra próximas vezes
+- Após entrevista, peça micro-feedback com opções rápidas (Avançar / Talvez / Não)
+- No piloto automático, "Avançar" auto-move o candidato sem perguntar de novo
 
 Nos dois modos, NUNCA aja como se não soubesse o que fazer. Faça primeiro, avise depois. Seja proativo e competente — não pergunte "quer que eu faça X?" para coisas que você pode simplesmente fazer e reportar.
 ```
@@ -1197,7 +1410,7 @@ git commit -m "feat: autonomy-aware system prompt and dynamic context injection"
 
 ---
 
-### Task 11: Run Full Test Suite and Final Verification
+### Task 12: Run Full Test Suite and Final Verification
 
 **Files:**
 - All modified files
@@ -1227,13 +1440,14 @@ echo "ALL OK"
 
 Add to the melhorias table:
 ```
-| 76 | **Autonomia v2 — dois modos** — copiloto (5 aprovações) e piloto automático (3 aprovações) | ✅ | 44 |
+| 76 | **Autonomia v2 — dois modos** — copiloto (5 aprovações) e piloto automático (2 aprovações) | ✅ | 44 |
 | 77 | **Cadeia pós-vaga** — screening + scorecard + form + smart match + linkedin automáticos | ✅ | 44 |
 | 78 | **Motor de confiança** — threshold de auto-advance aprendido + calibração semanal | ✅ | 44 |
 | 79 | **Follow-up por etapa** — cobrança progressiva pós-entrevista, offer, candidato excepcional | ✅ | 44 |
 | 80 | **Audit log** — registro de ações autônomas, exibido no briefing matinal | ✅ | 44 |
 | 81 | **Briefing expandido** — seções "fez / precisa de você / métricas" + audit log | ✅ | 44 |
 | 82 | **Auto-screening webhook** — hunting candidates triados automaticamente no JOB_TALENT_ADDED | ✅ | 44 |
+| 83 | **Smart scheduling** — proposta de horários baseada em slots preferidos + micro-feedback pós-entrevista | ✅ | 44 |
 ```
 
 - [ ] **Step 4: Update DIARIO_DO_PROJETO.md with session 44**

@@ -192,20 +192,86 @@ T+0:  Apresentar ao recrutador com ação clara:
       "Shortlist pronto. [Copiloto: Quer avançar?] [Piloto: Avancei os top 5.]"
 ```
 
-**Pós-aprovação de shortlist (candidatos esperando entrevista):**
+**Pós-shortlist — Agendamento inteligente de entrevista:**
+
+O agendamento é o ponto mais sensível do funil. Se for mal feito, atrasa o processo
+e irrita o recrutador. O princípio: **Eli prepara tudo e apresenta opções concretas**.
+
 ```
-T+0:   "Candidatos prontos pra entrevista. Quer que eu agende?"
-T+24h: "Ana e Pedro estão esperando desde ontem. Agendar pra quando?"
-T+48h: "Candidatos bons recebem propostas em 48h. Melhor não demorar."
-T+72h: Incluir no briefing com flag urgente: "⚠️ 3 candidatos há 3 dias sem entrevista"
+T+0:  Eli verifica disponibilidade (check_availability) e monta 2-3 opções:
+      "Ana, Pedro e João estão prontos pra entrevista! 🎯
+       Vi sua agenda e tenho 3 sugestões:
+       1. Amanhã (terça) 14h — Ana
+       2. Quarta 10h — Pedro
+       3. Quinta 14h — João
+       Quer que eu agende assim, ou prefere outros horários?"
+
+T+0:  [Piloto] Se recrutador tem slots preferidos salvos (preferred_interview_slots),
+      Eli propõe direto nesses horários. Se não tem, pergunta.
+
+      Recrutador responde:
+      "Ana e Pedro podem ser amanhã, João quinta"
+      → Eli agenda os 3, envia convites, kits, tudo automático.
+
+T+24h: Se recrutador não respondeu:
+       "Só retomando — Ana, Pedro e João estão esperando entrevista.
+        Sugiro agendar essa semana pra não perder momentum.
+        Qual o melhor horário pra você?"
+
+T+48h: "Candidatos bons recebem propostas em 48h. Ana (score 4.6) é
+        do tipo que não espera muito. Melhor dia essa semana?"
+
+T+72h: Incluir no briefing com flag urgente:
+       "⚠️ 3 candidatos há 3 dias sem entrevista"
 ```
 
-**Pós-entrevista (feedback pendente):**
+**Lógica de slots preferidos (learned + configurável):**
+
 ```
-T+2h:  "Como foi a entrevista com João? Me conta que eu preencho o scorecard."
-T+24h: "Feedback do João ainda pendente. Se foi bom, posso já montar a oferta."
-T+48h: "Último lembrete sobre João. Tá esperando retorno."
-       (Inclui no briefing diário como pendência)
+1. Se recrutador tem preferred_interview_slots no user_mapping:
+   → Usar esses horários direto (ex: "ter/qui 14h-16h")
+
+2. Se não tem, mas tem 5+ agendamentos históricos:
+   → Eli analisa padrões e sugere: "Percebi que você costuma
+     entrevistar ter/qui à tarde. Posso usar esses horários?"
+   → Se confirmar, salva como preferred_interview_slots.
+
+3. Se não tem nenhum dos dois:
+   → Perguntar: "Quais são seus horários preferidos pra entrevista?"
+   → Salvar a resposta pra usar dali em diante.
+```
+
+**Pipeline com múltiplas rodadas (RH → Liderança → Técnica):**
+
+```
+Quando candidato avança de "Bate-papo com RH" pra "Entrevista com Liderança":
+  → Eli detecta que a próxima etapa envolve outra pessoa
+  → Pergunta uma vez: "Quem faz a entrevista com liderança? (nome ou email)"
+  → Salva no contexto da vaga (interview_owners por stage)
+  → Nas próximas vezes, usa o mesmo entrevistador
+  → Agenda com o entrevistador, envia kit por email, cobra feedback via Slack do recrutador
+```
+
+**Pós-entrevista — Micro-feedback:**
+
+```
+T+2h após horário da entrevista:
+  "Como foi a entrevista com Ana? 🎯
+   [👍 Avançar] [🤷 Talvez] [👎 Não avançar]"
+
+  👍 → [Piloto] Auto-avança + preenche scorecard genérico (4/5)
+       "Movi Ana pra próxima etapa ✓ Se quiser detalhar o feedback, é só me contar."
+  👍 → [Copiloto] "Quer que eu mova Ana pra próxima etapa?"
+
+  🤷 → "O que pesou? Me conta rápido que eu registro."
+       (Espera input do recrutador → preenche scorecard com as notas)
+       "Quer agendar uma segunda conversa, ou prefere deixar pra pensar?"
+
+  👎 → Prepara reprovação: "Entendido. Preparo a devolutiva?"
+       (PEDE APROVAÇÃO — reprovação é sempre humana)
+
+T+24h sem resposta: "Feedback da Ana ainda pendente. Bom / Médio / Ruim?"
+T+48h: "Último lembrete sobre Ana." (Entra no briefing como pendência)
 ```
 
 **Candidato em etapa de Offer:**
@@ -219,9 +285,11 @@ T+7d:  "Proposta sem resposta há 1 semana. Candidato pode estar avaliando outra
 **Candidato excepcional (score ≥ 4.5):**
 ```
 T+0:   Notificação imediata com contexto de urgência:
-       "🚨 Ana Silva — score 4.8. Perfis assim somem em 48h."
-T+0:   [Piloto] Adicionar ao shortlist e sugerir entrevista imediata
-T+4h:  Se sem resposta: escalar com proposta concreta de horário
+       "🚨 Ana Silva — score 4.8. Perfis assim somem em 48h.
+        Seus próximos slots livres são terça 14h e quinta 10h.
+        Quer que eu agende com ela?"
+T+4h:  Se sem resposta: escalar com tom mais direto:
+       "Ainda sobre Ana (4.8). Agendo pra quinta 10h?"
 T+24h: Incluir no briefing como item vermelho
 ```
 
@@ -309,6 +377,10 @@ Expandir `DEFAULT_SETTINGS` em `user_mapping.py`:
 "autonomy_mode": "copilot",               # "copilot" | "autopilot"
 "auto_advance_threshold": 4.0,            # Score mínimo para auto-advance (Piloto)
 
+# Entrevistas
+"preferred_interview_slots": [],           # Ex: [{"day": "tue", "hour": 14}, {"day": "thu", "hour": 10}]
+"default_interview_duration": 60,          # Minutos
+
 # Follow-up
 "followup_intensity": "normal",            # "gentle" | "normal" | "aggressive"
 
@@ -316,6 +388,15 @@ Expandir `DEFAULT_SETTINGS` em `user_mapping.py`:
 "realtime_notifications": True,            # Notificações em tempo real
 "daily_briefing": True,                    # Briefing matinal
 ```
+
+**Campos por vaga (no contexto da conversa, não no user_mapping):**
+```python
+conv.set_context("interview_owners", {
+    "Entrevista com Liderança": {"name": "João Silva", "email": "joao@empresa.com"},
+    "Entrevista Técnica": {"name": "Pedro Dev", "email": "pedro@empresa.com"},
+})
+```
+Eli pergunta uma vez quem faz cada entrevista e salva. Nas próximas vezes, usa direto.
 
 ---
 
