@@ -272,6 +272,33 @@ class TestShouldAutoApprove:
         assert _should_auto_approve(user, "send_whatsapp") is True
         assert _should_auto_approve(user, "send_email") is True
 
+    def test_circuit_breaker_blocks_move(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        mock_learning = MagicMock()
+        mock_learning.check_circuit_breaker.return_value = True
+        assert _should_auto_approve(user, "move_candidates", learning=mock_learning, recruiter_id="u1") is False
+
+    def test_no_circuit_breaker_allows_move(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        mock_learning = MagicMock()
+        mock_learning.check_circuit_breaker.return_value = False
+        assert _should_auto_approve(user, "move_candidates", learning=mock_learning, recruiter_id="u1") is True
+
+    def test_circuit_breaker_blocks_auto_advance(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        mock_learning = MagicMock()
+        mock_learning.check_circuit_breaker.return_value = True
+        assert _should_auto_approve(user, "auto_advance", learning=mock_learning, recruiter_id="u1") is False
+
+    def test_no_learning_service_allows_move(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        # Without learning service, should still allow
+        assert _should_auto_approve(user, "move_candidates") is True
+
 
 class TestModoAutonomiaTool:
     def test_tool_exists(self):
@@ -286,3 +313,50 @@ class TestModoAutonomiaTool:
         assert "mode" in props
         assert "threshold" in props
         assert "mute_hours" in props
+
+
+class TestPostCreationChain:
+    @pytest.mark.asyncio
+    async def test_chain_runs_config_and_sends_message(self, mock_conv, mock_app):
+        from routers.handlers.job_creation import _post_creation_chain
+
+        mock_conv._context["job_data"] = {
+            "title": "Dev Python",
+            "requirements": ["Python", "FastAPI"],
+            "salary_range": {"min": 10000, "max": 15000},
+        }
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_app.state.user_mapping.get_user.return_value = {
+            "autonomy_mode": "copilot", "auto_advance_threshold": 4.0,
+        }
+        mock_app.state.inhire.gen_filter_job_talents.return_value = None
+        mock_app.state.inhire.list_job_talents.return_value = []
+
+        await _post_creation_chain(mock_conv, mock_app, "C123", "job-1")
+
+        # Should call auto_configure (screening)
+        mock_app.state.inhire.configure_screening.assert_called_once()
+        # Should send consolidated message
+        assert mock_app.state.slack.send_message.call_count >= 1
+
+
+class TestIsMuted:
+    def test_not_muted_when_none(self):
+        from routers.handlers.helpers import _is_muted
+        assert _is_muted({"muted_until": None}) is False
+
+    def test_not_muted_when_empty(self):
+        from routers.handlers.helpers import _is_muted
+        assert _is_muted({}) is False
+
+    def test_muted_when_future(self):
+        from routers.handlers.helpers import _is_muted
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        assert _is_muted({"muted_until": future}) is True
+
+    def test_not_muted_when_past(self):
+        from routers.handlers.helpers import _is_muted
+        from datetime import datetime, timedelta, timezone
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        assert _is_muted({"muted_until": past}) is False

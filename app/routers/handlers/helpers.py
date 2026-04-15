@@ -286,10 +286,11 @@ _ALWAYS_AUTO = {
 }
 
 
-def _should_auto_approve(user: dict, action: str) -> bool:
+def _should_auto_approve(user: dict, action: str, learning=None, recruiter_id: str = "") -> bool:
     """Check if an action should be auto-approved based on recruiter's autonomy mode.
 
     Returns True if the action can proceed without explicit recruiter approval.
+    For move/advance actions in autopilot, also checks the circuit breaker.
     """
     if action in _ALWAYS_REQUIRE_APPROVAL:
         return False
@@ -297,5 +298,26 @@ def _should_auto_approve(user: dict, action: str) -> bool:
         return True
     mode = user.get("autonomy_mode", "copilot")
     if mode == "autopilot" and action in _AUTOPILOT_ONLY:
+        # Check circuit breaker for move actions
+        if action in ("move_candidates", "auto_advance") and learning and recruiter_id:
+            if learning.check_circuit_breaker(recruiter_id):
+                return False
         return True
     return False
+
+
+def _is_muted(user: dict) -> bool:
+    """Check if recruiter has muted notifications.
+    Returns True if muted (skip sending proactive messages)."""
+    muted_until = user.get("muted_until")
+    if not muted_until:
+        return False
+    from datetime import datetime, timezone
+    try:
+        if isinstance(muted_until, str):
+            muted_dt = datetime.fromisoformat(muted_until)
+        else:
+            return False
+        return datetime.now(timezone.utc) < muted_dt
+    except Exception:
+        return False
