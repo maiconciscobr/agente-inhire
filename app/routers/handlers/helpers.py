@@ -84,6 +84,19 @@ def _build_dynamic_context(conv, is_returning: bool = False) -> str | None:
         insight = r.get(f"inhire:insights:{conv.user_id}")
         if insight:
             parts.append(f"ESTILO DO RECRUTADOR (padrões aprendidos):\n{insight}")
+
+        # Autonomy mode context
+        try:
+            user_data = r.get(f"inhire:user:{conv.user_id}")
+            if user_data:
+                import json as _json2
+                u = _json2.loads(user_data)
+                mode = u.get("autonomy_mode", "copilot")
+                threshold = u.get("auto_advance_threshold", 4.0)
+                mode_label = "Piloto Automático" if mode == "autopilot" else "Copiloto"
+                parts.append(f"MODO DE AUTONOMIA: {mode_label} (threshold auto-advance: {threshold})")
+        except Exception:
+            pass
     except Exception:
         pass
 
