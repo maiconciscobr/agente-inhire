@@ -219,3 +219,56 @@ class TestAutonomySettings:
         assert defaults["default_interview_duration"] == 60
         assert defaults["notification_mode"] == "realtime"
         assert defaults["muted_until"] is None
+
+
+class TestShouldAutoApprove:
+    def test_copilot_blocks_move(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "move_candidates") is False
+
+    def test_copilot_allows_screening(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "auto_screening") is True
+
+    def test_copilot_allows_smart_match(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "smart_match") is True
+
+    def test_autopilot_allows_move(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "move_candidates") is True
+
+    def test_autopilot_allows_publish(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "publish_job") is True
+
+    def test_neither_mode_allows_reject(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user_cp = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        user_ap = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user_cp, "reject_candidates") is False
+        assert _should_auto_approve(user_ap, "reject_candidates") is False
+
+    def test_neither_mode_allows_offer(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user_cp = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        user_ap = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user_cp, "send_offer") is False
+        assert _should_auto_approve(user_ap, "send_offer") is False
+
+    def test_copilot_blocks_external_comms(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "copilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "send_whatsapp") is False
+        assert _should_auto_approve(user, "send_email") is False
+
+    def test_autopilot_allows_external_comms(self, mock_app):
+        from routers.handlers.helpers import _should_auto_approve
+        user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
+        assert _should_auto_approve(user, "send_whatsapp") is True
+        assert _should_auto_approve(user, "send_email") is True

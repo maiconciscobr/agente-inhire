@@ -243,3 +243,46 @@ def _talent_phone(a: dict) -> str | None:
     if not raw:
         return None
     return _normalize_phone(raw)
+
+
+# Actions that NEVER auto-approve (require human in both modes)
+_ALWAYS_REQUIRE_APPROVAL = {
+    "reject_candidates",
+    "send_offer",
+}
+
+# Actions that auto-approve ONLY in autopilot mode
+_AUTOPILOT_ONLY = {
+    "move_candidates",
+    "publish_job",
+    "auto_advance",
+    "send_whatsapp",
+    "send_email",
+    "send_external_comms",
+}
+
+# Actions that auto-approve in BOTH modes (internal, no external impact)
+_ALWAYS_AUTO = {
+    "auto_screening",
+    "smart_match",
+    "configure_job",
+    "generate_shortlist",
+    "generate_linkedin_search",
+    "send_interview_kit",
+    "follow_up",
+}
+
+
+def _should_auto_approve(user: dict, action: str) -> bool:
+    """Check if an action should be auto-approved based on recruiter's autonomy mode.
+
+    Returns True if the action can proceed without explicit recruiter approval.
+    """
+    if action in _ALWAYS_REQUIRE_APPROVAL:
+        return False
+    if action in _ALWAYS_AUTO:
+        return True
+    mode = user.get("autonomy_mode", "copilot")
+    if mode == "autopilot" and action in _AUTOPILOT_ONLY:
+        return True
+    return False
