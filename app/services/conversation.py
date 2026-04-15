@@ -23,8 +23,6 @@ class FlowState(str, Enum):
     IDLE = "idle"
     # Job creation flow
     COLLECTING_BRIEFING = "collecting_briefing"
-    WAITING_TECHNICAL_INPUT = "waiting_technical_input"
-    REVIEWING_JOB_DRAFT = "reviewing_job_draft"
     WAITING_JOB_APPROVAL = "waiting_job_approval"
     # Screening flow
     MONITORING_CANDIDATES = "monitoring_candidates"

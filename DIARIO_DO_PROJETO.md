@@ -2,6 +2,89 @@
 
 ---
 
+## Sessão 43 — 15 de abril de 2026
+
+### Objetivo
+Auto-análise completa do projeto + implementar todas as oportunidades de alto impacto identificadas.
+
+### Análise realizada
+- Cruzamento completo: 22 tools existentes vs API InHire vs endpoints descobertos no código-fonte
+- Identificados **14 endpoints prontos** que o agente não usava
+- Identificados **5 itens de código morto** (métodos, FlowStates)
+- Identificada seção 16 do MAPEAMENTO_API_INHIRE.md desatualizada (fóssil da sessão 4)
+
+### Implementações
+
+**Novos endpoints no inhire_client.py (+19 métodos):**
+- `duplicate_job()` — POST /jobs/duplicate
+- `list_job_templates()` — GET /jobs/templates
+- `create_job_from_template()` — POST /jobs (com templateId)
+- `create_job_stages()` / `update_job_stages()` — POST/PATCH /jobs/stages
+- `generate_subscription_form()` — POST /forms/ai/generate-subscription-form
+- `get_interview_kit()` — GET /forms/scorecards/interview-kit-fill/{id}/jobTalent/{jt}
+- `submit_scorecard_evaluation()` — POST /forms/scorecards/jobTalent/{jt}/{interviewId}
+- `generate_scorecard_feedback()` — POST /forms/ai/generate-feedback
+- `send_disc_email()` — POST /forms/comms/disc/send/email
+- `send_form_email()` — POST /forms/{typeformId}/comms/send/email
+- `create_survey()` — POST /forms/surveys
+- `get_survey_metrics()` — GET /forms/surveys/jobs/{jobId}/metrics
+- `react_to_candidate()` — POST /job-talents/reaction/{id}
+- `get_smart_cv()` / `create_smart_cv()` — GET/POST /talents/{id}/smartcv
+- `get_offer_template_detail()` — GET /offer-letters/templates/{id}
+
+**Novas tools no Claude (4 novas, total 26):**
+- `duplicar_vaga` → `_duplicate_job()` — copiar vaga existente
+- `avaliar_entrevista` → `_evaluate_interview()` — feedback livre → scorecard estruturado
+- `enviar_teste` → `_send_test()` — DISC, formulários, screening
+- `pesquisa_candidato` → `_handle_nps_survey()` — NPS e métricas de satisfação
+
+**Fluxos existentes enriquecidos:**
+- `configurar_vaga` → agora também gera formulário IA (`generate_subscription_form`)
+- `agendar_entrevista` → envia kit de entrevista automaticamente após agendar
+- `criar_vaga` → mostra templates disponíveis se existirem
+- `carta_oferta` → busca variáveis obrigatórias de cada template
+
+**Limpeza de código morto:**
+- Removidos: `list_applications()`, `update_application()`, `get_scorecards()` (endpoints quebrados)
+- Removidos: FlowStates órfãos `WAITING_TECHNICAL_INPUT`, `REVIEWING_JOB_DRAFT`
+- Migrado: `proactive_monitor.py` de `list_applications` → `list_job_talents` (endpoint correto)
+
+**Testes unitários com pytest (novos!):**
+- `tests/conftest.py` — fixtures compartilhadas (mock InHire, Slack, Claude, Conv, App)
+- `tests/test_inhire_client.py` — 18 testes de endpoints (paths, payloads, edge cases)
+- `tests/test_handlers.py` — 16 testes de handlers (business logic, tool definitions, flow states)
+- **34/34 passando**
+
+### Arquivos modificados
+- `app/services/inhire_client.py` — +19 métodos, -3 código morto
+- `app/services/claude_client.py` — +4 tools, SYSTEM_PROMPT atualizado
+- `app/services/conversation.py` — -2 FlowStates órfãos
+- `app/services/proactive_monitor.py` — migrado list_applications → list_job_talents
+- `app/routers/handlers/hunting.py` — +2 handlers (_duplicate_job, _handle_nps_survey)
+- `app/routers/handlers/interviews.py` — +3 handlers (_send_interview_kit, _evaluate_interview, _send_test)
+- `app/routers/handlers/job_creation.py` — formulário IA no _auto_configure_job
+- `app/routers/slack.py` — +4 elif branches, templates na criação de vaga
+- `app/tests/` — suite pytest completa (3 arquivos, 34 testes)
+- `CLAUDE.md` — novas tools, endpoints, melhorias 66-75
+- `MAPEAMENTO_API_INHIRE.md` — seção 16 corrigida
+- `DIARIO_DO_PROJETO.md` — esta sessão
+
+### Decisões técnicas
+- **4 tools novas (não 14):** cada tool custa ~100 tokens no detect_intent. 4 tools = ~400 tokens. Agrupar por intenção do recrutador, não por endpoint.
+- **Kit automático pós-agendamento:** não precisa de tool nova — enriquece o fluxo existente invisívelmente
+- **Formulário IA integrado em configurar_vaga:** não precisa de tool separada — o recrutador já diz "configurar vaga"
+- **pytest separado do test_agent.py:** o E2E é valioso quando dá pra rodar (requer servidor + Slack + créditos). Os unit tests rodam offline em 4s.
+- **Código morto removido agressivamente:** `list_applications` estava sendo chamado no proactive_monitor (corrigido pra `list_job_talents`)
+
+### Números finais
+- **26 tools** no Claude (era 22)
+- **~75 métodos** no InHire client (era ~60)
+- **11 FlowStates** (era 13, removidos 2 orfãos)
+- **34 testes pytest** passando
+- **75 melhorias** documentadas (era 65)
+
+---
+
 ## Sessão 42 — 14 de abril de 2026
 
 ### Objetivo

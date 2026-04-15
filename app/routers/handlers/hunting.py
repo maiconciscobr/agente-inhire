@@ -757,3 +757,95 @@ async def _smart_match(conv, app, channel_id: str, tool_input: dict):
 
     msg += "Quer que eu analise algum em detalhe ou gere uma abordagem?"
     await _send(conv, slack, channel_id, msg)
+
+
+async def _duplicate_job(conv, app, channel_id: str, tool_input: dict):
+    """Duplicate an existing job."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+    if not job_id:
+        await _send(conv, slack, channel_id, "Qual vaga você quer duplicar? Me passe o ID ou nome.")
+        return
+
+    await _send(conv, slack, channel_id, "Duplicando vaga... ⏳")
+
+    try:
+        original = await inhire.get_job(job_id)
+        new_job = await inhire.duplicate_job(job_id)
+        new_id = new_job.get("id", "")
+        new_name = new_job.get("name", original.get("name", "Nova Vaga"))
+
+        conv.set_context("current_job_id", new_id)
+        conv.set_context("current_job_name", new_name)
+
+        msg = (
+            f"Vaga duplicada! 🎉\n\n"
+            f"*Original:* {original.get('name', job_id)}\n"
+            f"*Nova vaga:* {new_name}\n"
+            f"*ID:* `{new_id}`\n\n"
+            "A nova vaga veio com o mesmo pipeline, descrição e configurações. "
+            "Quer que eu ajuste alguma coisa? (nome, salário, requisitos...)"
+        )
+        await _send(conv, slack, channel_id, msg)
+    except Exception as e:
+        logger.error("Erro ao duplicar vaga %s: %s", job_id, e)
+        await _send(conv, slack, channel_id, f"Não consegui duplicar a vaga. Erro: {e}")
+
+
+async def _handle_nps_survey(conv, app, channel_id: str, tool_input: dict):
+    """Send NPS survey or show metrics for a job."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+    if not job_id:
+        await _send(conv, slack, channel_id, "Para qual vaga? Me passe o ID.")
+        return
+
+    action = tool_input.get("action", "metricas")
+
+    if action == "enviar":
+        try:
+            await inhire.create_survey(job_id)
+            job = await inhire.get_job(job_id)
+            job_name = job.get("name", job_id)
+            await _send(
+                conv, slack, channel_id,
+                f"Pesquisa de experiência agendada para a vaga *{job_name}*! 📊\n"
+                "Os candidatos vão receber o questionário por email.",
+            )
+        except Exception as e:
+            logger.error("Erro ao criar survey: %s", e)
+            await _send(conv, slack, channel_id, f"Não consegui agendar a pesquisa. Erro: {e}")
+    else:
+        try:
+            metrics = await inhire.get_survey_metrics(job_id)
+            if not metrics:
+                await _send(conv, slack, channel_id, "Ainda não tem resultados de pesquisa pra essa vaga.")
+                return
+
+            job = await inhire.get_job(job_id)
+            job_name = job.get("name", job_id)
+            nps = metrics.get("nps", "N/A")
+            responses = metrics.get("totalResponses", 0)
+            avg_score = metrics.get("averageScore", "N/A")
+
+            msg = (
+                f"📊 *Pesquisa de Experiência — {job_name}*\n\n"
+                f"• *NPS:* {nps}\n"
+                f"• *Nota média:* {avg_score}\n"
+                f"• *Respostas:* {responses}\n"
+            )
+
+            details = metrics.get("details", {})
+            if details:
+                msg += "\n*Detalhamento:*\n"
+                for key, value in details.items():
+                    msg += f"• {key}: {value}\n"
+
+            await _send(conv, slack, channel_id, msg)
+        except Exception as e:
+            logger.error("Erro ao obter métricas survey: %s", e)
+            await _send(conv, slack, channel_id, "Não consegui obter as métricas da pesquisa.")

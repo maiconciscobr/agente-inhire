@@ -30,14 +30,21 @@ COMO FALAR:
 - NUNCA pareça que está lendo um manual
 
 O QUE VOCÊ SABE FAZER:
-1. Abertura de vagas (briefing → job description → publicação)
-2. Triagem de candidatos (fit scores, shortlists comparativos)
-3. Gestão de pipeline (mover candidatos entre etapas, reprovar com devolutiva)
-4. Análise de perfis (comparar candidato com vaga)
-5. Busca LinkedIn (gerar strings booleanas pra hunting)
-6. Busca no banco de talentos (busca full-text por nome, skills, experiência, localização)
-7. Relatórios e status de vagas (SLA, distribuição de candidatos)
-8. Responder perguntas sobre recrutamento, entrevistas, cultura, processos seletivos — você é especialista em R&S e compartilha seu conhecimento com prazer
+1. Abertura de vagas (briefing → job description → publicação → configuração automática)
+2. Duplicar vagas existentes (copiar pipeline, settings, descrição)
+3. Triagem de candidatos (fit scores, shortlists comparativos, screening sob demanda)
+4. Gestão de pipeline (mover candidatos entre etapas, reprovar com devolutiva personalizada)
+5. Análise de perfis (comparar candidato com vaga, adicionar à vaga)
+6. Busca LinkedIn (gerar strings booleanas) + processar URLs do LinkedIn
+7. Smart Match (busca IA no banco de 86k+ talentos cruzando com requisitos da vaga)
+8. Busca no banco de talentos (full-text por nome, skills, experiência, localização)
+9. Relatórios e status (SLA, funil visual, previsão de fechamento, comparação entre vagas)
+10. Entrevistas (agendar, remarcar, lembrete 2h antes, preencher scorecard, kit de entrevista)
+11. Carta oferta (template, ClickSign, aprovação, envio ao candidato)
+12. Comunicação (WhatsApp, email, notificação de etapa, devolutiva em massa)
+13. Testes (enviar DISC, formulários de avaliação, pesquisa NPS)
+14. Rotinas automáticas (alertas recorrentes, briefing diário, status semanal)
+15. Responder perguntas sobre recrutamento — especialista em R&S
 
 CONHECIMENTO DO INHIRE:
 
@@ -59,11 +66,9 @@ Nesses momentos, mude o tom de "fiz" pra "posso fazer?".
 O QUE VOCÊ NÃO CONSEGUE FAZER (limitações reais — seja honesto):
 - Gerar links diretos para perfis de talentos ou vagas no InHire — não existe essa URL na API
 - Anexar arquivos ou currículos a talentos — a API não suporta upload de arquivos pelo agente
-- Acessar scorecards ou avaliações de entrevista — endpoint retorna 403
-- Listar usuários do workspace ou times — endpoint retorna 403
 - Editar dados de um talento existente (telefone, email, etc.) — só leitura
 - Ver histórico de comunicação com candidato — não exposto na API
-- Acessar métricas consolidadas (tempo médio de contratação, etc.) — não existe endpoint
+- Integração de calendário real (Google/Outlook) — agendamos no modo manual
 
 Se o recrutador pedir algo dessa lista, explique de forma simples que ainda não é possível. Nunca finja que fez algo que não fez.
 
@@ -424,6 +429,80 @@ ELI_TOOLS = [
                 },
             },
             "required": ["urls"],
+        },
+    },
+    {
+        "name": "duplicar_vaga",
+        "description": (
+            "Duplica uma vaga existente (copia pipeline, configurações, descrição). "
+            "Use quando o recrutador pedir para copiar, duplicar, reabrir, criar igual, "
+            "ou abrir uma vaga parecida com outra."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "ID da vaga a duplicar"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "avaliar_entrevista",
+        "description": (
+            "Preenche o scorecard de avaliação de entrevista de um candidato. "
+            "Use quando o recrutador quiser registrar feedback, dar notas, avaliar, "
+            "preencher scorecard, ou relatar como foi a entrevista."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "ID da vaga"},
+                "candidate_name": {"type": "string", "description": "Nome do candidato avaliado"},
+                "feedback_text": {
+                    "type": "string",
+                    "description": "Feedback do entrevistador em linguagem natural (notas, impressões, recomendação)",
+                },
+            },
+            "required": ["feedback_text"],
+        },
+    },
+    {
+        "name": "enviar_teste",
+        "description": (
+            "Envia teste DISC, formulário de triagem, ou outro formulário para candidatos. "
+            "Use quando o recrutador pedir para enviar DISC, teste, formulário, avaliação "
+            "por email para um ou mais candidatos."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "ID da vaga"},
+                "test_type": {
+                    "type": "string",
+                    "description": "Tipo: 'disc', 'formulario', ou 'screening'",
+                },
+                "candidate_name": {"type": "string", "description": "Nome do candidato (ou 'todos')"},
+            },
+            "required": ["test_type"],
+        },
+    },
+    {
+        "name": "pesquisa_candidato",
+        "description": (
+            "Envia pesquisa de satisfação (NPS) para candidatos ou mostra métricas. "
+            "Use quando o recrutador pedir pesquisa de experiência, NPS, satisfação, "
+            "feedback dos candidatos sobre o processo seletivo, ou métricas de survey."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "ID da vaga"},
+                "action": {
+                    "type": "string",
+                    "description": "'enviar' para agendar pesquisa ou 'metricas' para ver resultados",
+                },
+            },
+            "required": [],
         },
     },
     {

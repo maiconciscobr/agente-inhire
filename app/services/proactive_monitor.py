@@ -371,7 +371,7 @@ class ProactiveMonitor:
             new_count = 0
             high_fit_count = 0
             try:
-                talents = await self.inhire.list_applications({"jobId": job_id})
+                talents = await self.inhire.list_job_talents(job_id)
                 for t in talents:
                     t_created = t.get("createdAt", "")
                     if t_created:
@@ -615,7 +615,7 @@ class ProactiveMonitor:
 
         # --- Check high fit accumulation ---
         try:
-            apps = await self.inhire.list_applications({"jobId": job_id})
+            apps = await self.inhire.list_job_talents(job_id)
             high_fit = [a for a in apps if a.get("screening", {}).get("status") == "pre-aproved"]
             low_fit = [a for a in apps if a.get("screening", {}).get("status") == "pre-rejected"]
             total_scored = len([a for a in apps if a.get("screening", {}).get("status")])

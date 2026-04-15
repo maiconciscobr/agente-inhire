@@ -26,8 +26,13 @@ from routers.handlers.candidates import (
 from routers.handlers.interviews import (
     _start_offer_flow, _handle_offer_input, _create_and_send_offer,
     _start_scheduling, _handle_scheduling_input,
+    _evaluate_interview, _send_test,
 )
-from routers.handlers.hunting import _analyze_profile, _compare_jobs, _generate_linkedin_search, _job_status_report, _process_linkedin_profiles, _search_talents, _smart_match
+from routers.handlers.hunting import (
+    _analyze_profile, _compare_jobs, _duplicate_job, _generate_linkedin_search,
+    _handle_nps_survey, _job_status_report, _process_linkedin_profiles,
+    _search_talents, _smart_match,
+)
 from services.routines import RoutineService
 
 logger = logging.getLogger("agente-inhire.slack-router")
@@ -709,6 +714,21 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         conv.state = FlowState.COLLECTING_BRIEFING
         conv.set_context("briefing_parts", [briefing])
 
+        # Check if templates are available (offer shortcut)
+        templates_hint = ""
+        try:
+            templates = await inhire.list_job_templates()
+            if templates:
+                conv.set_context("available_job_templates", templates)
+                tpl_names = [t.get("name", "?") for t in templates[:5]]
+                templates_hint = (
+                    "\n💡 Dica: você tem templates disponíveis:\n"
+                    + "\n".join(f"  • {n}" for n in tpl_names)
+                    + '\nSe quiser usar um, diga "usar template [nome]".\n'
+                )
+        except Exception:
+            pass
+
         # If briefing is rich enough (has salary/requirements/model), go straight to extraction
         briefing_lower = briefing.lower()
         has_salary = any(w in briefing_lower for w in ["salário", "salario", "budget", "faixa", "mil", "k "])
@@ -742,7 +762,8 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                 "• Faixa salarial e regime (CLT/PJ)\n"
                 "• Requisitos técnicos\n"
                 "• Urgência\n\n"
-                "Pode mandar tudo de uma vez ou em partes — quando tiver passado tudo, é só me avisar.",
+                "Pode mandar tudo de uma vez ou em partes — quando tiver passado tudo, é só me avisar."
+                + templates_hint,
             )
 
     elif tool == "ver_candidatos":
@@ -934,6 +955,18 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             await _auto_configure_job(conv, request.app, channel_id, job_id)
         else:
             await slack.post_message(channel_id, "Preciso saber qual vaga configurar. Me passe o ID.")
+
+    elif tool == "duplicar_vaga":
+        await _duplicate_job(conv, app, channel_id, tool_input)
+
+    elif tool == "avaliar_entrevista":
+        await _evaluate_interview(conv, app, channel_id, tool_input)
+
+    elif tool == "enviar_teste":
+        await _send_test(conv, app, channel_id, tool_input)
+
+    elif tool == "pesquisa_candidato":
+        await _handle_nps_survey(conv, app, channel_id, tool_input)
 
     elif tool == "conversa_livre":
         # Use text from detect_intent if available, avoid double-call

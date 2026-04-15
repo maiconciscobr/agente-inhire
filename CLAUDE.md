@@ -102,6 +102,18 @@ handlers = {
 - `smart_match` → `_smart_match()` (busca IA no banco de talentos 86k+ via `gen_filter_job_talents` + screening automático + tags)
 - `processar_linkedin` → `_process_linkedin_profiles()` (recrutador cola URLs → dedup → cria talento → vincula à vaga → BrightData extrai perfil → screening)
 
+**Layer 1 — Funcional (resolvido sessão 43):**
+- `duplicar_vaga` → `_duplicate_job()` (copia pipeline, settings, descrição)
+- `avaliar_entrevista` → `_evaluate_interview()` (recrutador dita feedback → Claude parseia → preenche scorecard → IA gera parecer)
+- `enviar_teste` → `_send_test()` (DISC, formulário de triagem, ou qualquer form por email)
+- `pesquisa_candidato` → `_handle_nps_survey()` (enviar pesquisa NPS / ver métricas de satisfação)
+
+**Fluxos enriquecidos (sessão 43):**
+- `configurar_vaga` → agora também gera formulário de inscrição com IA (`POST /forms/ai/generate-subscription-form`)
+- `agendar_entrevista` → envia kit de entrevista automaticamente após agendar (CV + scorecard + roteiro)
+- `criar_vaga` → mostra templates disponíveis se existirem (`GET /jobs/templates`)
+- `carta_oferta` → busca variáveis obrigatórias de cada template (`GET /offer-letters/templates/{id}`)
+
 ---
 
 ## Armadilhas da API InHire
@@ -157,6 +169,19 @@ handlers = {
 | Criar automação | `POST /workflows/automations` |
 | Tags em batch | `POST /job-talents/tags/add/batch` |
 | Busca IA talentos | `POST /search-talents/ai/generate-job-talent-filter` |
+| Duplicar vaga | `POST /jobs/duplicate` |
+| Templates de vaga | `GET /jobs/templates` |
+| Stages customizados | `POST /jobs/stages` + `PATCH /jobs/stages` |
+| Gerar formulário IA | `POST /forms/ai/generate-subscription-form` |
+| Kit de entrevista | `GET /forms/scorecards/interview-kit-fill/{id}/jobTalent/{jt}` |
+| Avaliar entrevista | `POST /forms/scorecards/jobTalent/{jt}/{interviewId}` |
+| Feedback IA scorecard | `POST /forms/ai/generate-feedback` |
+| Enviar DISC | `POST /forms/comms/disc/send/email` |
+| Enviar formulário email | `POST /forms/{typeformId}/comms/send/email` |
+| Pesquisa NPS | `POST /forms/surveys` + `GET /forms/surveys/jobs/{jobId}/metrics` |
+| Reagir candidato | `POST /job-talents/reaction/{id}` |
+| Smart CV | `GET/POST /talents/{id}/smartcv` (descoberto, a testar) |
+| Template oferta detail | `GET /offer-letters/templates/{id}` |
 
 ### Bugs conhecidos da API
 
@@ -285,6 +310,16 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 63 | **TTLs em todas as keys Redis** — decisões 180d, users 365d, insights 10d, interaction 30d, threshold 90d | ✅ | 41 |
 | 64 | **Atomicidade Redis** — pipeline atômico no counter, `set(nx=True, ex=ttl)` nos alertas | ✅ | 41 |
 | 65 | **Limpeza de contexto** — `conv.context` limpa 18 keys ao trocar de vaga ativa | ✅ | 41 |
+| 66 | **Duplicar vaga** — `POST /jobs/duplicate` via tool `duplicar_vaga` | ✅ | 43 |
+| 67 | **Avaliar entrevista via Slack** — feedback livre → Claude parseia → preenche scorecard + IA gera parecer | ✅ | 43 |
+| 68 | **Enviar DISC/testes** — `POST /forms/comms/disc/send/email` + formulários por email | ✅ | 43 |
+| 69 | **Pesquisa NPS** — `POST /forms/surveys` + `GET /forms/surveys/jobs/{id}/metrics` | ✅ | 43 |
+| 70 | **Formulário IA pós-vaga** — `POST /forms/ai/generate-subscription-form` integrado em `configurar_vaga` | ✅ | 43 |
+| 71 | **Kit de entrevista automático** — `GET /forms/scorecards/interview-kit-fill/{id}/jobTalent/{jt}` pós-agendamento | ✅ | 43 |
+| 72 | **Templates de vaga** — `GET /jobs/templates` oferecidos ao criar vaga | ✅ | 43 |
+| 73 | **Template oferta detalhado** — `GET /offer-letters/templates/{id}` com variáveis obrigatórias | ✅ | 43 |
+| 74 | **Limpeza código morto** — removidos `list_applications`, `update_application`, `get_scorecards`, FlowStates orfãos | ✅ | 43 |
+| 75 | **Migração proactive_monitor** — `list_applications` → `list_job_talents` (endpoint correto) | ✅ | 43 |
 
 ---
 

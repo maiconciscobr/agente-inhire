@@ -1,6 +1,6 @@
 # Mapeamento Completo da API InHire
 
-**Gerado em:** 31 de marco de 2026 | **Atualizado em:** 14 de abril de 2026 (sessao 40)
+**Gerado em:** 31 de marco de 2026 | **Atualizado em:** 15 de abril de 2026 (sessao 43)
 **Método:** Testes diretos via curl + Help Center + informações dos devs (Andre e Marcelo)
 **Tenant de teste:** demo
 **Service account:** Agente IA (role: Teste ADM Math2)
@@ -588,19 +588,21 @@ GET /search-talents/security/key/talents?engine=typesense
 
 ---
 
-## 16. Endpoints que NÃO existem na API
+## 16. Endpoints que NÃO existem na API (atualizado sessao 43)
+
+> **ATENÇÃO:** Esta seção foi extensamente corrigida. Muitos endpoints listados como "sem endpoint" em sessões anteriores na verdade existiam no código-fonte InHire e foram descobertos e implementados nas sessões 40-43.
 
 | Funcionalidade | Status | Confirmado por |
 |---|---|---|
 | ~~Busca full-text no Banco de Talentos~~ | ✅ Resolvido (Typesense, sessao 34) | Andre |
+| ~~Formulario de inscricao~~ | ✅ `GET /forms/job-id/{jobId}` + `POST /forms/ai/generate-subscription-form` | Codigo-fonte |
+| ~~Triagem IA — config de criterios~~ | ✅ `PATCH /jobs/{id}` com `screeningSettings` | Codigo-fonte |
+| ~~Divulgacao em portais~~ | ✅ `POST /job-posts/pages` + `GET /integrations` | Codigo-fonte |
+| ~~Automacoes de vaga~~ | ✅ `POST /workflows/automations` | Codigo-fonte |
+| ~~Historico de movimentacao~~ | ✅ `GET /job-talents/{id}/timeline` | Codigo-fonte |
+| ~~Analytics/reporting~~ | ✅ Calculado pelo agente (funil, SLA, previsão, comparação) | Implementado |
+| ~~Smart CV~~ | ✅ `GET/POST /talents/{id}/smartcv` (descoberto, a testar) | Codigo-fonte |
 | InTerview — entrevista completa por WhatsApp | Modulo separado, sem API publica | Marcelo |
-| Formulario de inscricao — config de campos/perguntas | Sem endpoint | Testado |
-| Triagem IA — config de criterios | Sem endpoint | Testado |
-| Divulgacao em portais | Sem endpoint | Testado |
-| Automacoes de vaga | Sem endpoint | Help Center |
-| Historico de movimentacao do candidato | Sem endpoint | Testado |
-| Analytics/reporting | Sem endpoint | Testado |
-| Smart CV | Feature UI, sem API | Help Center |
 | GraphQL | Uso interno apenas | Andre |
 
 ---

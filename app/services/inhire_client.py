@@ -51,6 +51,35 @@ class InHireClient:
         return resp.json()
 
     # --- Jobs ---
+    async def duplicate_job(self, job_id: str) -> dict:
+        """Duplicate an existing job (copies pipeline, settings, description)."""
+        logger.info("Duplicando vaga %s", job_id)
+        return await self._request("POST", "/jobs/duplicate", json={"jobId": job_id})
+
+    async def list_job_templates(self) -> list[dict]:
+        """List available job templates."""
+        return await self._request("GET", "/jobs/templates")
+
+    async def create_job_from_template(self, template_id: str, overrides: dict | None = None) -> dict:
+        """Create a job from a template with optional field overrides."""
+        payload: dict = {"templateId": template_id}
+        if overrides:
+            payload.update(overrides)
+        return await self._request("POST", "/jobs", json=payload)
+
+    async def create_job_stages(self, job_id: str, stages: list[dict]) -> dict:
+        """Create custom pipeline stages for a job.
+        stages format: [{"name": "Triagem", "type": "screening", "order": 1}]"""
+        return await self._request("POST", "/jobs/stages", json={
+            "jobId": job_id, "stages": stages,
+        })
+
+    async def update_job_stages(self, job_id: str, stages: list[dict]) -> dict:
+        """Update pipeline stages for a job."""
+        return await self._request("PATCH", "/jobs/stages", json={
+            "jobId": job_id, "stages": stages,
+        })
+
     async def create_job(self, payload: dict) -> dict:
         """Create a job. Required fields: name, locationRequired, talentSuggestions."""
         logger.info("Criando vaga: %s", payload.get("name", ""))
@@ -75,25 +104,10 @@ class InHireClient:
     async def get_requisitions(self, params: dict | None = None) -> list:
         return await self._request("GET", "/requisitions", params=params or {})
 
-    # --- Applications / Job Talents ---
-    async def list_applications(self, params: dict | None = None) -> list:
-        """List applications. Note: returns empty for hunting candidates.
-        Use list_job_talents() instead for complete candidate list."""
-        return await self._request("GET", "/applications", params=params or {})
-
-    async def get_application(self, app_id: str) -> dict:
-        return await self._request("GET", f"/applications/{app_id}")
-
+    # --- Job Talents (candidates in a job) ---
     async def list_job_talents(self, job_id: str) -> list:
         """List ALL candidates in a job (hunting + organic). Returns talent details, stage, screening."""
         return await self._request("GET", f"/job-talents/{job_id}/talents")
-
-    async def update_application(self, app_id: str, payload: dict) -> dict:
-        """Update application. Required field: status."""
-        logger.info("Atualizando candidatura %s: %s", app_id, payload)
-        return await self._request(
-            "PATCH", f"/applications/{app_id}", json=payload
-        )
 
     async def move_candidate(self, job_talent_id: str, stage_id: str, comment: str = "") -> dict:
         """Move candidate to a new stage.
@@ -180,9 +194,6 @@ class InHireClient:
         return await self._request("POST", "/job-talents/stages/history", json=job_talent_ids)
 
     # --- Scorecards ---
-    async def get_scorecards(self, params: dict | None = None) -> list:
-        return await self._request("GET", "/scorecards", params=params or {})
-
     async def get_job_scorecard(self, job_id: str) -> dict | None:
         """Get scorecard config for a job (skill categories and criteria)."""
         try:
@@ -253,6 +264,85 @@ class InHireClient:
             raise
 
     # --- Forms ---
+
+    async def generate_subscription_form(self, job_id: str) -> dict | None:
+        """Use InHire AI to generate application form questions from the job description.
+        Endpoint: POST /forms/ai/generate-subscription-form"""
+        try:
+            return await self._request(
+                "POST", "/forms/ai/generate-subscription-form", json={"jobId": job_id},
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                logger.warning("generate_subscription_form falhou %d: %s", e.response.status_code, e.response.text[:200])
+                return None
+            raise
+
+    async def get_interview_kit(self, scorecard_id: str, job_talent_id: str) -> dict | None:
+        """Get complete interview kit (CV + scorecard + script) for a candidate.
+        Endpoint: GET /forms/scorecards/interview-kit-fill/{scorecardId}/jobTalent/{jobTalentId}"""
+        try:
+            return await self._request(
+                "GET", f"/forms/scorecards/interview-kit-fill/{scorecard_id}/jobTalent/{job_talent_id}",
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                return None
+            raise
+
+    async def submit_scorecard_evaluation(self, job_talent_id: str, interview_id: str,
+                                           payload: dict) -> dict:
+        """Submit interviewer evaluation for a candidate.
+        Endpoint: POST /forms/scorecards/jobTalent/{jt}/{interviewId}
+        payload: {scores: [{criteriaId, score, comment}], recommendation, overallComment}"""
+        return await self._request(
+            "POST", f"/forms/scorecards/jobTalent/{job_talent_id}/{interview_id}",
+            json=payload,
+        )
+
+    async def generate_scorecard_feedback(self, scores: list[dict], job_name: str = "") -> dict | None:
+        """Use InHire AI to generate written feedback from scorecard scores.
+        Endpoint: POST /forms/ai/generate-feedback"""
+        try:
+            return await self._request(
+                "POST", "/forms/ai/generate-feedback",
+                json={"scores": scores, "jobName": job_name},
+            )
+        except httpx.HTTPStatusError:
+            return None
+
+    async def send_disc_email(self, job_talent_ids: list[str]) -> None:
+        """Send DISC personality test invitation to candidates via email.
+        Endpoint: POST /forms/comms/disc/send/email"""
+        await self._request(
+            "POST", "/forms/comms/disc/send/email",
+            json={"jobTalentIds": job_talent_ids},
+        )
+
+    async def send_form_email(self, form_id: str, job_talent_ids: list[str]) -> None:
+        """Send any form (screening, evaluation, survey) to candidates via email.
+        Endpoint: POST /forms/{typeformId}/comms/send/email"""
+        await self._request(
+            "POST", f"/forms/{form_id}/comms/send/email",
+            json={"jobTalentIds": job_talent_ids},
+        )
+
+    async def create_survey(self, job_id: str, survey_type: str = "candidate_experience") -> dict:
+        """Schedule a candidate experience survey (NPS).
+        Endpoint: POST /forms/surveys"""
+        return await self._request("POST", "/forms/surveys", json={
+            "jobId": job_id, "type": survey_type,
+        })
+
+    async def get_survey_metrics(self, job_id: str) -> dict | None:
+        """Get NPS / satisfaction metrics for a job.
+        Endpoint: GET /forms/surveys/jobs/{jobId}/metrics"""
+        try:
+            return await self._request("GET", f"/forms/surveys/jobs/{job_id}/metrics")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                return None
+            raise
 
     async def get_job_form(self, job_id: str) -> list[dict]:
         """Get application form config for a job. Returns list of form items."""
@@ -423,6 +513,15 @@ class InHireClient:
     async def list_offer_templates(self) -> list:
         return await self._request("GET", "/offer-letters/templates")
 
+    async def get_offer_template_detail(self, template_id: str) -> dict | None:
+        """Get a specific offer template with its required variables."""
+        try:
+            return await self._request("GET", f"/offer-letters/templates/{template_id}")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 404):
+                return None
+            raise
+
     async def get_offer_settings(self) -> dict:
         return await self._request("GET", "/offer-letters/settings")
 
@@ -550,6 +649,32 @@ class InHireClient:
         """Create a basic talent record. Used for LinkedIn profiles before full data extraction.
         data should include at minimum: {name, linkedinUsername} or {name, email}."""
         return await self._request("POST", "/talents", json=data)
+
+    async def react_to_candidate(self, job_talent_id: str, reaction: str) -> dict:
+        """React to a candidate (like/love/dislike).
+        reaction: 'like', 'love', 'dislike', or 'none' (to clear)."""
+        return await self._request(
+            "POST", f"/job-talents/reaction/{job_talent_id}",
+            json={"reaction": reaction},
+        )
+
+    async def get_smart_cv(self, talent_id: str) -> dict | None:
+        """Get Smart CV (standardized CV) for a talent."""
+        try:
+            return await self._request("GET", f"/talents/{talent_id}/smartcv")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 403, 404):
+                return None
+            raise
+
+    async def create_smart_cv(self, talent_id: str, data: dict) -> dict | None:
+        """Create/update Smart CV for a talent."""
+        try:
+            return await self._request("POST", f"/talents/{talent_id}/smartcv", json=data)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 403, 404):
+                return None
+            raise
 
     # --- Job Publishing ---
 

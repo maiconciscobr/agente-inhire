@@ -202,6 +202,14 @@ async def _auto_configure_job(conv, app, channel_id: str, job_id: str):
     except Exception as e:
         logger.warning("Erro ao configurar scorecard: %s", e)
 
+    # 3. Generate application form with AI
+    try:
+        form_result = await inhire.generate_subscription_form(job_id)
+        if form_result:
+            configured.append("formulário de inscrição (IA)")
+    except Exception as e:
+        logger.warning("Erro ao gerar formulário IA: %s", e)
+
     if configured:
         items = ", ".join(configured)
         await _send(conv, slack, channel_id,

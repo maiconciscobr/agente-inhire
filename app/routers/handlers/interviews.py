@@ -97,7 +97,21 @@ async def _start_offer_flow(conv, app, channel_id: str, text: str):
         if templates:
             msg += "\n*Templates disponíveis:*\n"
             for i, t in enumerate(templates[:5], 1):
-                msg += f"  {i}. {t.get('name', 'Sem nome')}\n"
+                t_name = t.get("name", "Sem nome")
+                msg += f"  {i}. {t_name}"
+                # Try to get required variables for each template
+                t_id = t.get("id", "")
+                if t_id:
+                    try:
+                        detail = await inhire.get_offer_template_detail(t_id)
+                        if detail:
+                            variables = detail.get("requiredVariables") or detail.get("variables") or detail.get("templateVariables", [])
+                            if variables:
+                                var_names = [v.get("name", v) if isinstance(v, dict) else str(v) for v in variables[:5]]
+                                msg += f" — variáveis: {', '.join(var_names)}"
+                    except Exception:
+                        pass
+                msg += "\n"
 
         msg += (
             "\nMe diga:\n"
@@ -519,6 +533,12 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
         except Exception as reminder_err:
             logger.warning("Não agendou lembrete: %s", reminder_err)
 
+        # Send interview kit to recruiter
+        try:
+            await _send_interview_kit(conv, app, channel_id, candidate.get("id", ""), candidate_name)
+        except Exception as kit_err:
+            logger.warning("Erro ao enviar kit de entrevista: %s", kit_err)
+
         # Offer WhatsApp confirmation
         phone = _talent_phone(candidate)
         user_data = app.state.user_mapping.get_user(conv.user_id) or {}
@@ -548,3 +568,317 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
         logger.exception("Erro ao agendar entrevista: %s", e)
         await _send(conv, slack, channel_id, f"❌ Erro ao agendar: {e}")
         conv.state = FlowState.MONITORING_CANDIDATES
+
+
+async def _send_interview_kit(conv, app, channel_id: str, job_talent_id: str, candidate_name: str):
+    """Send interview kit (CV + scorecard + script) to recruiter via Slack."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_id = conv.get_context("current_job_id")
+    if not job_id:
+        return
+
+    try:
+        scorecard = await inhire.get_job_scorecard(job_id)
+        if not scorecard:
+            logger.info("Sem scorecard pra vaga %s, pulando kit", job_id)
+            return
+
+        scorecard_id = scorecard.get("id", "")
+        if not scorecard_id:
+            return
+
+        kit = await inhire.get_interview_kit(scorecard_id, job_talent_id)
+        if not kit:
+            logger.info("Kit de entrevista indisponível para %s", job_talent_id)
+            return
+
+        msg = f"📋 *Kit de Entrevista — {candidate_name}*\n\n"
+
+        cv_summary = kit.get("resumeSummary") or kit.get("cvSummary", "")
+        if cv_summary:
+            msg += f"*Resumo do CV:*\n{cv_summary[:500]}\n\n"
+
+        criteria = kit.get("criteria") or kit.get("skillCategories", [])
+        if criteria:
+            msg += "*Critérios de avaliação:*\n"
+            for cat in criteria[:10]:
+                cat_name = cat.get("name", "")
+                skills = cat.get("skills", [])
+                skill_names = ", ".join(s.get("name", "") for s in skills[:5])
+                msg += f"• *{cat_name}:* {skill_names}\n"
+            msg += "\n"
+
+        script = kit.get("interviewScript") or kit.get("questions", [])
+        if isinstance(script, list) and script:
+            msg += "*Roteiro sugerido:*\n"
+            for i, q in enumerate(script[:8], 1):
+                q_text = q if isinstance(q, str) else q.get("question", q.get("text", ""))
+                msg += f"{i}. {q_text}\n"
+            msg += "\n"
+
+        msg += "Após a entrevista, me diz como foi que eu preencho o scorecard! 📝"
+        await _send(conv, slack, channel_id, msg)
+
+    except Exception as e:
+        logger.warning("Erro ao buscar kit de entrevista: %s", e)
+
+
+async def _evaluate_interview(conv, app, channel_id: str, tool_input: dict):
+    """Parse interviewer feedback and submit scorecard evaluation."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+    claude = app.state.claude
+
+    job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+    if not job_id:
+        await _send(conv, slack, channel_id, "Para qual vaga é essa avaliação? Me passe o ID.")
+        return
+
+    feedback_text = tool_input.get("feedback_text", "")
+    candidate_name = tool_input.get("candidate_name", "")
+
+    await _send(conv, slack, channel_id, "Processando avaliação... ⏳")
+
+    try:
+        # Get scorecard criteria for this job
+        scorecard = await inhire.get_job_scorecard(job_id)
+        if not scorecard:
+            await _send(
+                conv, slack, channel_id,
+                "Essa vaga não tem scorecard configurado. "
+                "Quer que eu configure um? (use *configurar vaga*)",
+            )
+            return
+
+        criteria = []
+        for cat in scorecard.get("skillCategories", []):
+            for skill in cat.get("skills", []):
+                criteria.append({
+                    "id": skill.get("id", ""),
+                    "name": skill.get("name", ""),
+                    "category": cat.get("name", ""),
+                })
+
+        if not criteria:
+            await _send(conv, slack, channel_id, "Scorecard sem critérios definidos.")
+            return
+
+        # Use Claude to parse free-form feedback into structured scores
+        criteria_list = "\n".join(f"- {c['name']} (categoria: {c['category']})" for c in criteria)
+        system = (
+            "Você extrai notas de avaliação de entrevista a partir de feedback livre.\n"
+            "Critérios disponíveis:\n" + criteria_list + "\n\n"
+            "Retorne JSON puro (sem ```):\n"
+            '{"scores": [{"criteriaId": "id", "criteriaName": "nome", "score": 1-5, '
+            '"comment": "observação"}], "recommendation": "advance|hold|reject", '
+            '"overallComment": "parecer geral"}\n\n'
+            "Se o entrevistador não deu nota pra algum critério, use 3 (neutro).\n"
+            "Converta impressões qualitativas: excelente=5, bom=4, ok=3, fraco=2, ruim=1."
+        )
+
+        # Map criteria IDs for Claude
+        criteria_map = {c["name"].lower(): c["id"] for c in criteria}
+        resp = await claude.chat(
+            messages=[{"role": "user", "content": f"Candidato: {candidate_name}\nFeedback:\n{feedback_text}"}],
+            system=system,
+            max_tokens=1024,
+        )
+
+        raw = resp.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        evaluation = json.loads(raw)
+
+        # Map criteria names to IDs
+        final_scores = []
+        for s in evaluation.get("scores", []):
+            cid = s.get("criteriaId", "")
+            if not cid:
+                name_lower = s.get("criteriaName", "").lower()
+                cid = criteria_map.get(name_lower, "")
+            if cid:
+                final_scores.append({
+                    "criteriaId": cid,
+                    "score": min(5, max(1, int(s.get("score", 3)))),
+                    "comment": s.get("comment", ""),
+                })
+
+        recommendation = evaluation.get("recommendation", "hold")
+        overall_comment = evaluation.get("overallComment", "")
+
+        # Try to find the candidate's job-talent ID and latest interview
+        candidates = await inhire.list_job_talents(job_id)
+        job_talent_id = None
+        for c in candidates:
+            talent = c.get("talent") or {}
+            name = talent.get("name", "")
+            if candidate_name and candidate_name.lower() in name.lower():
+                job_talent_id = c.get("id")
+                break
+
+        if not job_talent_id:
+            # Show parsed evaluation without submitting
+            msg = f"📝 *Avaliação parseada — {candidate_name}*\n\n"
+            for s in final_scores:
+                cname = next((c["name"] for c in criteria if c["id"] == s["criteriaId"]), s["criteriaId"])
+                msg += f"• *{cname}:* {'⭐' * s['score']} ({s['score']}/5)"
+                if s["comment"]:
+                    msg += f" — {s['comment']}"
+                msg += "\n"
+            msg += f"\n*Recomendação:* {recommendation}\n*Parecer:* {overall_comment}\n\n"
+            msg += "⚠️ Não encontrei o candidato na vaga pelo nome. Me confirma o nome completo?"
+            await _send(conv, slack, channel_id, msg)
+            conv.set_context("pending_evaluation", evaluation)
+            conv.set_context("pending_evaluation_scores", final_scores)
+            return
+
+        # Find latest interview appointment
+        try:
+            appointments = await inhire.list_candidate_appointments(job_talent_id)
+            interview_id = ""
+            if appointments:
+                latest = sorted(appointments, key=lambda a: a.get("startDateTime", ""), reverse=True)
+                interview_id = latest[0].get("id", "") if latest else ""
+        except Exception:
+            interview_id = ""
+
+        if interview_id:
+            # Submit to InHire
+            try:
+                await inhire.submit_scorecard_evaluation(job_talent_id, interview_id, {
+                    "scores": final_scores,
+                    "recommendation": recommendation,
+                    "overallComment": overall_comment,
+                })
+            except Exception as e:
+                logger.warning("Falha ao submeter scorecard: %s (mostrando avaliação sem salvar)", e)
+
+        # Also try to generate AI feedback
+        ai_feedback = None
+        try:
+            ai_feedback = await inhire.generate_scorecard_feedback(
+                final_scores, conv.get_context("current_job_name", ""),
+            )
+        except Exception:
+            pass
+
+        # Format response
+        msg = f"📝 *Avaliação registrada — {candidate_name}*\n\n"
+        for s in final_scores:
+            cname = next((c["name"] for c in criteria if c["id"] == s["criteriaId"]), "?")
+            msg += f"• *{cname}:* {'⭐' * s['score']} ({s['score']}/5)"
+            if s["comment"]:
+                msg += f" — {s['comment']}"
+            msg += "\n"
+
+        rec_emoji = {"advance": "✅", "hold": "🟡", "reject": "❌"}.get(recommendation, "🟡")
+        msg += f"\n*Recomendação:* {rec_emoji} {recommendation}\n"
+        if overall_comment:
+            msg += f"*Parecer:* {overall_comment}\n"
+
+        if ai_feedback and isinstance(ai_feedback, dict):
+            ai_text = ai_feedback.get("feedback") or ai_feedback.get("text", "")
+            if ai_text:
+                msg += f"\n💡 *Parecer IA:* {ai_text[:300]}\n"
+
+        if interview_id:
+            msg += "\n✅ Salvo no InHire!"
+        else:
+            msg += "\n⚠️ Sem entrevista vinculada — avaliação mostrada mas não salva no InHire."
+
+        await _send(conv, slack, channel_id, msg)
+
+    except json.JSONDecodeError:
+        await _send(
+            conv, slack, channel_id,
+            "Não consegui estruturar o feedback. Tenta de novo com mais detalhes?\n"
+            "Exemplo: *\"João foi bem tecnicamente (4/5), comunicação fraca (2/5), recomendo avançar\"*",
+        )
+    except Exception as e:
+        logger.exception("Erro ao avaliar entrevista: %s", e)
+        await _send(conv, slack, channel_id, f"Erro ao processar avaliação: {e}")
+
+
+async def _send_test(conv, app, channel_id: str, tool_input: dict):
+    """Send DISC test or other form to candidates."""
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
+    if not job_id:
+        await _send(conv, slack, channel_id, "Para qual vaga? Me passe o ID.")
+        return
+
+    test_type = tool_input.get("test_type", "disc").lower()
+    candidate_name = tool_input.get("candidate_name", "").lower()
+
+    # Load candidates
+    candidates = await inhire.list_job_talents(job_id)
+    if not candidates:
+        await _send(conv, slack, channel_id, "Nenhum candidato nessa vaga.")
+        return
+
+    # Filter candidates
+    target_ids = []
+    target_names = []
+    if candidate_name and candidate_name != "todos":
+        for c in candidates:
+            talent = c.get("talent") or {}
+            name = talent.get("name", "")
+            if candidate_name in name.lower():
+                target_ids.append(c.get("id"))
+                target_names.append(name)
+    else:
+        for c in candidates:
+            if c.get("status") not in ("rejected", "dropped"):
+                target_ids.append(c.get("id"))
+                target_names.append((c.get("talent") or {}).get("name", "?"))
+
+    if not target_ids:
+        await _send(conv, slack, channel_id, "Não encontrei candidatos com esse nome.")
+        return
+
+    try:
+        if test_type == "disc":
+            await inhire.send_disc_email(target_ids)
+            msg = f"Teste DISC enviado para {len(target_ids)} candidato(s)! 🧠\n"
+        elif test_type == "screening":
+            # Get the screening form for this job
+            forms = await inhire.get_job_form(job_id)
+            if forms:
+                form_id = forms[0].get("id", "") if isinstance(forms, list) else forms.get("id", "")
+                if form_id:
+                    await inhire.send_form_email(form_id, target_ids)
+                    msg = f"Formulário de triagem enviado para {len(target_ids)} candidato(s)! 📝\n"
+                else:
+                    await _send(conv, slack, channel_id, "Não encontrei o formulário dessa vaga.")
+                    return
+            else:
+                await _send(conv, slack, channel_id, "Essa vaga não tem formulário configurado.")
+                return
+        else:
+            # Generic form send — try to find form by type
+            forms = await inhire.get_job_form(job_id)
+            if forms:
+                form_id = forms[0].get("id", "") if isinstance(forms, list) else forms.get("id", "")
+                if form_id:
+                    await inhire.send_form_email(form_id, target_ids)
+                    msg = f"Formulário enviado para {len(target_ids)} candidato(s)! 📝\n"
+                else:
+                    await _send(conv, slack, channel_id, "Não encontrei formulário pra essa vaga.")
+                    return
+            else:
+                await _send(conv, slack, channel_id, "Essa vaga não tem formulário configurado.")
+                return
+
+        if len(target_names) <= 5:
+            msg += "• " + "\n• ".join(target_names)
+        else:
+            msg += f"({len(target_names)} candidatos ativos)"
+        await _send(conv, slack, channel_id, msg)
+
+    except Exception as e:
+        logger.error("Erro ao enviar teste: %s", e)
+        await _send(conv, slack, channel_id, f"Não consegui enviar o teste. Erro: {e}")
