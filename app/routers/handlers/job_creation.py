@@ -216,3 +216,124 @@ async def _auto_configure_job(conv, app, channel_id: str, job_id: str):
                     f"⚙️ Configurei automaticamente: *{items}* para a vaga *{job_name}*.")
 
     return configured
+
+
+async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
+    """Execute the full post-creation automation chain.
+    Phase 1 (sequential): auto-configure (screening, scorecard, form)
+    Phase 2 (parallel): smart match + linkedin search
+    Phase 3 (mode-dependent): auto-publish in autopilot
+    Phase 4: consolidated message
+    """
+    import asyncio
+    slack = app.state.slack
+    inhire = app.state.inhire
+
+    job_data = conv.get_context("job_data", {})
+    job_name = conv.get_context("current_job_name", "")
+    user = app.state.user_mapping.get_user(conv.user_id) or {}
+    mode = user.get("autonomy_mode", "copilot")
+
+    results = {"configured": [], "match_count": 0, "high_fit": 0, "linkedin": ""}
+
+    # Set chain-active flag to prevent webhook auto-screening collisions
+    r = None
+    try:
+        import redis as redis_lib
+        from config import get_settings
+        r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+        r.set(f"inhire:chain_active:{job_id}", "1", ex=300)
+    except Exception:
+        pass
+
+    # Phase 1: Auto-configure (SEQUENTIAL — must complete before match/screening)
+    configured = await _auto_configure_job(conv, app, channel_id, job_id)
+    results["configured"] = configured or []
+
+    # Phase 2: Smart Match + LinkedIn search (PARALLEL)
+    async def _run_smart_match():
+        try:
+            requirements = job_data.get("requirements", [])
+            query = " ".join(requirements[:5]) if requirements else job_name
+            ai_result = await inhire.gen_filter_job_talents(job_id, query)
+            if ai_result:
+                results["match_count"] = ai_result.get("total", 0) if isinstance(ai_result, dict) else 0
+            # Log to audit
+            if hasattr(app.state, "audit_log"):
+                app.state.audit_log.log_action(
+                    conv.user_id, "smart_match", job_id,
+                    detail=f"{results['match_count']} matches",
+                )
+        except Exception as e:
+            logger.warning("Smart match pós-vaga falhou: %s", e)
+
+    async def _run_linkedin_search():
+        try:
+            requirements = job_data.get("requirements", [])
+            title = job_data.get("title", "")
+            location = job_data.get("location", "")
+            terms = [title] + requirements[:5]
+            required = " AND ".join(f'"{t}"' for t in terms[:3] if t)
+            optional = " OR ".join(f'"{t}"' for t in terms[3:] if t)
+            search = f"({required})"
+            if optional:
+                search += f" AND ({optional})"
+            if location:
+                search += f' AND "{location}"'
+            results["linkedin"] = search
+            if hasattr(app.state, "audit_log"):
+                app.state.audit_log.log_action(
+                    conv.user_id, "linkedin_search", job_id, detail="String gerada",
+                )
+        except Exception as e:
+            logger.warning("LinkedIn search pós-vaga falhou: %s", e)
+
+    await asyncio.gather(_run_smart_match(), _run_linkedin_search(), return_exceptions=True)
+
+    # Phase 3: Auto-publish (autopilot only)
+    auto_published = False
+    if mode == "autopilot":
+        try:
+            integrations = await inhire.get_integrations()
+            career_pages = [i for i in integrations if i.get("type") == "careerPage"]
+            if career_pages:
+                page_id = career_pages[0].get("id", "")
+                if page_id:
+                    await inhire.publish_job(job_id, page_id, job_name, ["linkedin", "indeed"])
+                    auto_published = True
+                    if hasattr(app.state, "audit_log"):
+                        app.state.audit_log.log_action(
+                            conv.user_id, "auto_publish", job_id, detail="LinkedIn + Indeed",
+                        )
+        except Exception as e:
+            logger.warning("Auto-publish falhou: %s", e)
+
+    # Clear chain-active flag
+    try:
+        if r is not None:
+            r.delete(f"inhire:chain_active:{job_id}")
+    except Exception:
+        pass
+
+    # Phase 4: Consolidated message (result-oriented)
+    msg = f"Vaga *{job_name}* criada! Já estou trabalhando nela 🚀\n\n"
+
+    if results["match_count"] > 0:
+        msg += (
+            f"Encontrei {results['match_count']} candidatos no banco de talentos. "
+            f"Estou analisando e te mando o shortlist em breve.\n\n"
+        )
+
+    if results["linkedin"]:
+        msg += f"Busca LinkedIn pronta:\n`{results['linkedin']}`\n\n"
+
+    if auto_published:
+        msg += "📢 Divulguei no LinkedIn e Indeed ✓\n\n"
+    elif mode == "copilot":
+        msg += "Quer que eu divulgue no LinkedIn e Indeed?\n\n"
+
+    msg += "Vou ficar de olho nos candidatos e te aviso quando tiver gente boa!"
+
+    await _send(conv, slack, channel_id, msg)
+
+    conv.state = FlowState.MONITORING_CANDIDATES
