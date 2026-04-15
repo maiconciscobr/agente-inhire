@@ -1,6 +1,6 @@
 # Eli Autonomia v2 — Design Spec
 
-**Data:** 2026-04-15
+**Data:** 2026-04-15 | **Revisão:** 2026-04-15 (pós-review de especialistas)
 **Objetivo:** Transformar o Eli de assistente reativo em agente autônomo que acelera o time-to-fill, reduzindo de 13 para 2-5 pontos de aprovação conforme o modo escolhido.
 
 ---
@@ -10,6 +10,15 @@
 ### Copiloto (padrão)
 
 Eli faz tudo que pode automaticamente. Avisa o que fez. Só pede aprovação quando a ação tem **impacto externo ou envolve movimento de candidatos no pipeline**.
+
+Quando há 3+ ações pendentes, Eli **agrupa em lote** e pede 1 clique para confirmar tudo (batch approval):
+```
+"Tenho 3 ações pendentes:
+ • Mover Ana e Pedro para Entrevista
+ • Divulgar vaga no LinkedIn e Indeed
+ • Enviar shortlist por WhatsApp pro candidato
+ [✅ Confirma tudo]  [📝 Quero revisar uma a uma]"
+```
 
 **5 pontos de aprovação:**
 
@@ -34,7 +43,7 @@ Eli faz tudo que pode automaticamente. Avisa o que fez. Só pede aprovação qua
 
 ### Piloto Automático
 
-Tudo do Copiloto, mais: divulga vagas automaticamente e move candidatos com score acima do threshold sem pedir.
+Tudo do Copiloto, mais: divulga vagas automaticamente, move candidatos com score acima do threshold, e envia comunicações externas sem pedir.
 
 **2 pontos de aprovação:**
 
@@ -46,16 +55,31 @@ Tudo do Copiloto, mais: divulga vagas automaticamente e move candidatos com scor
 **Faz sozinho adicionalmente:**
 - Divulga vaga após criação (portais configurados)
 - Move candidatos para próxima etapa se score ≥ threshold do recrutador
-- Envia comunicação externa (WhatsApp/email) automaticamente com templates
-- Agenda entrevistas proativamente após shortlist aprovado (sugere horários)
+- Envia comunicação externa (WhatsApp/email) com templates pré-aprovados + rodapé "mensagem assistida por IA"
+- Agenda entrevistas proativamente após shortlist aprovado (propõe horários)
 
 ### Troca de Modo
 
-O recrutador diz no Slack:
-- "modo piloto automático" / "piloto" / "automático" → ativa
-- "modo copiloto" / "copiloto" / "manual" → volta ao padrão
+**Sempre com confirmação explícita** (nunca silenciosa):
+
+```
+Recrutador: "modo piloto automático"
+
+Eli: "Entendi! No modo *Piloto Automático* eu faço o máximo sozinho:
+      • Divulgo vagas, movo candidatos, comunico candidatos
+      • Só paro pra reprovar e enviar oferta
+      Threshold de auto-advance: score ≥ 4.0
+      
+      [✈️ Ativar Piloto]  [🧑‍✈️ Manter Copiloto]"
+```
 
 Salvo em `user_mapping` no Redis (`autonomy_mode: "copilot" | "autopilot"`). Default: `copilot`.
+
+**Aviso para poucos dados:** Se recrutador tem < 15 decisões registradas:
+```
+"Posso ativar, mas ainda tenho poucos dados pra calibrar o auto-advance.
+ Pode ter mais erros que o normal no começo. Continua?"
+```
 
 ---
 
@@ -63,47 +87,40 @@ Salvo em `user_mapping` no Redis (`autonomy_mode: "copilot" | "autopilot"`). Def
 
 Quando uma vaga é criada e aprovada, em **ambos os modos**:
 
-### Sequência (< 2 minutos)
+### Sequência (fase crítica sequencial, depois paralelo)
 
 ```
-1. Configurar screening IA (critérios do briefing)         → já existe
-2. Criar scorecard (skills do briefing)                     → já existe
-3. Gerar formulário IA (perguntas automáticas)              → já existe
-4. Executar Smart Match (buscar top 15-20 no banco)         → NOVO: trigger automático
-5. Disparar screening nos matches encontrados               → NOVO: trigger automático
-6. Gerar string de busca LinkedIn                           → NOVO: trigger automático
-7. Enviar resumo consolidado ao recrutador                  → NOVO
+SEQUENCIAL (obrigatório nesta ordem):
+1. Configurar screening IA (critérios do briefing)
+2. Criar scorecard (skills do briefing)
+3. Gerar formulário IA (perguntas automáticas)
+
+PARALELO (após config completa):
+4. Executar Smart Match (buscar top 15-20 no banco)     }
+5. Disparar screening nos matches encontrados            } asyncio.gather
+6. Gerar string de busca LinkedIn                        }
+
+7. Enviar resumo consolidado ao recrutador
 ```
 
-### Mensagem consolidada
+**Flag de proteção:** Redis key `inhire:chain_active:{job_id}` com TTL 5min impede que webhooks disparem screening duplicado durante a cadeia.
+
+### Mensagem consolidada (orientada a RESULTADO, não a processo)
 
 ```
-✅ Vaga *Dev Python Senior* criada e configurada!
+Vaga *Dev Python Senior* criada! Já estou trabalhando nela 🚀
 
-⚙️ *Setup automático:*
-• Triagem IA com 5 critérios do briefing
-• Scorecard: Técnico (Python, FastAPI, Docker) + Cultural
-• Formulário de inscrição gerado por IA
+Encontrei 12 candidatos no banco de talentos — 5 com alto fit.
+Estou analisando eles agora e te mando o shortlist em breve.
 
-🔍 *Busca no banco de talentos:*
-• 12 talentos compatíveis encontrados (Smart Match)
-• 5 com alto fit (≥ 4.0), screening em andamento
-• String LinkedIn pronta 👇
-  (Python AND FastAPI AND "senior" AND (remoto OR "São Paulo"))
+Enquanto isso, preparei uma busca no LinkedIn pra você:
+  Python AND FastAPI AND "senior" AND (remoto OR "São Paulo")
 
 [Copiloto] Quer que eu divulgue no LinkedIn e Indeed?
 [Piloto]   Divulguei no LinkedIn e Indeed ✓
 ```
 
-### Implementação
-
-**Novo método `_post_creation_chain(conv, app, channel_id, job_id, job_data)`** em `job_creation.py`:
-- Chamado após `create_job` retornar sucesso (dentro de `_handle_approval` quando `callback_id == "job_draft_approval"`)
-- Executa sequência com `asyncio.gather` onde possível (screening, match, linkedin em paralelo)
-- Envia uma única mensagem consolidada
-- No modo Piloto, também chama `publish_job()` automaticamente
-
-**Dependência:** precisa do `job_data` (extraído do briefing) e do `job_id` (retornado pela API).
+**Princípio:** O recrutador não precisa saber que screening IA, scorecard e formulário foram configurados — ele precisa saber **quantos candidatos, qual a qualidade, e o que fazer em seguida**.
 
 ---
 
@@ -113,22 +130,38 @@ Quando uma vaga é criada e aprovada, em **ambos os modos**:
 
 O motor aprende em que faixa de score o recrutador aprova candidatos, e no modo Piloto Automático, avança automaticamente quem estiver dentro dessa faixa.
 
-### Dados
+**Regra cardinal:** Copilot = sempre pede aprovação para mover, independente do confidence. Autopilot = usa confidence para decidir se auto-avança ou não.
 
-Armazenado em Redis:
+### Dados
 
 ```
 Key: inhire:confidence:{recruiter_id}
 TTL: 365 dias
 Value: {
-    "auto_advance_threshold": 4.0,        // Score mínimo. Default 4.0, ajustável
-    "learned_threshold": null,             // Calculado pelo motor. null = sem dados suficientes
-    "decisions_count": 0,                  // Total de decisões de shortlist
-    "approval_rate_above_threshold": 0.0,  // % de aprovações acima do threshold
-    "reversals_count": 0,                  // Vezes que recrutador reverteu auto-advance
-    "last_calibration": null               // Data do último recálculo
+    "auto_advance_threshold": 4.0,
+    "learned_threshold": null,
+    "decisions_count": 0,
+    "approval_rate_above_threshold": 0.0,
+    "reversals_count": 0,
+    "reversals_recent": 0,          // Últimas 48h (para circuit breaker)
+    "auto_advances_recent": 0,      // Últimas 48h
+    "last_calibration": null,
+    "circuit_breaker_active": false
 }
 ```
+
+### Circuit Breaker
+
+**Se nas últimas 48h, mais de 30% dos auto-advances foram revertidos:**
+1. Desativar auto-advance automaticamente (`circuit_breaker_active: true`)
+2. Notificar recrutador:
+```
+"Percebi que estou errando mais do que o normal nas movimentações
+automáticas. Vou voltar a pedir aprovação até me recalibrar.
+Quer ajustar o threshold ou manter assim?"
+```
+3. Recalibrar na próxima rodada semanal
+4. Recrutador pode reativar manualmente
 
 ### Calibração
 
@@ -139,34 +172,40 @@ Roda no cron semanal (seg 9:30 BRT), junto com o mini-KAIROS:
 3. Calcular taxa de aprovação por faixa
 4. O `learned_threshold` é o menor score onde aprovação ≥ 85%
 5. Se `reversals_count > 3` nos últimos 30 dias, aumentar threshold em 0.3
+6. Resetar `reversals_recent` e `auto_advances_recent`
 
 ### Fluxo no Piloto Automático
 
 ```
 Candidato com score X chega:
+  Se circuit_breaker_active:
+    → Tratar como copiloto (pedir aprovação)
   Se X ≥ auto_advance_threshold:
     → Mover para próxima etapa automaticamente
     → Registrar no audit log
-    → Notificação em tempo real: "Movi Ana (4.6) para Entrevista ✓"
+    → Notificação com botão [Desfazer]: "Movi Ana (4.6) para Entrevista ✓ [Desfazer]"
+    → Incrementar auto_advances_recent
   Se X < threshold:
     → Incluir no shortlist, apresentar ao recrutador para decisão
 ```
+
+### Botão [Desfazer] (TTL 1h)
+
+Toda ação automática inclui botão de reversão inline:
+```
+"Movi Ana (4.6) para Entrevista ✓  [Desfazer]"
+```
+Se clicado dentro de 1 hora:
+- Reverter no InHire (mover de volta)
+- Incrementar `reversals_recent`
+- Confirmar: "Pronto, voltei Ana pra etapa anterior."
 
 ### Threshold manual
 
 O recrutador pode definir/ajustar a qualquer momento:
 - "Eli, avança automaticamente quem tiver acima de 4.0"
 - "Eli, aumenta o threshold pra 4.5"
-- "Eli, para de mover automaticamente"
-
-Comando atualiza `auto_advance_threshold` no Redis.
-
-### Reversão
-
-Se o recrutador diz "volta a Ana pra etapa anterior" ou "não devia ter movido":
-- Reverter no InHire (mover de volta)
-- Incrementar `reversals_count`
-- Se 3+ reversões → notificar: "Tô errando nas movimentações automáticas. Quer que eu ajuste o threshold ou volte a pedir aprovação?"
+- "Eli, para de mover automaticamente" → ativa circuit breaker manual
 
 ---
 
@@ -214,12 +253,11 @@ T+0:  [Piloto] Se recrutador tem slots preferidos salvos (preferred_interview_sl
       → Eli agenda os 3, envia convites, kits, tudo automático.
 
 T+24h: Se recrutador não respondeu:
-       "Só retomando — Ana, Pedro e João estão esperando entrevista.
-        Sugiro agendar essa semana pra não perder momentum.
-        Qual o melhor horário pra você?"
+       "Ana, Pedro e João estão esperando entrevista.
+        Sugiro agendar essa semana. Qual o melhor horário?"
 
-T+48h: "Candidatos bons recebem propostas em 48h. Ana (score 4.6) é
-        do tipo que não espera muito. Melhor dia essa semana?"
+T+48h: "Ana (score 4.6) está esperando retorno há 48h.
+        Melhor dia essa semana?"
 
 T+72h: Incluir no briefing com flag urgente:
        "⚠️ 3 candidatos há 3 dias sem entrevista"
@@ -257,20 +295,21 @@ Quando candidato avança de "Bate-papo com RH" pra "Entrevista com Liderança":
 ```
 T+2h após horário da entrevista:
   "Como foi a entrevista com Ana? 🎯
-   [👍 Avançar] [🤷 Talvez] [👎 Não avançar]"
+   [Avançar] [Preciso pensar] [Não avançar]"
 
-  👍 → [Piloto] Auto-avança + preenche scorecard genérico (4/5)
-       "Movi Ana pra próxima etapa ✓ Se quiser detalhar o feedback, é só me contar."
-  👍 → [Copiloto] "Quer que eu mova Ana pra próxima etapa?"
+  Avançar → [Piloto] Auto-avança + marca scorecard como "pendente detalhamento"
+            "Movi Ana pra próxima etapa ✓ [Desfazer]
+             Se quiser detalhar o feedback, é só me contar."
+  Avançar → [Copiloto] "Movo Ana pra próxima etapa?"
 
-  🤷 → "O que pesou? Me conta rápido que eu registro."
-       (Espera input do recrutador → preenche scorecard com as notas)
-       "Quer agendar uma segunda conversa, ou prefere deixar pra pensar?"
+  Preciso pensar → "Entendi. Até agora você entrevistou 2 de 4 candidatos.
+                    Ana ficou como 'talvez'. Pedro foi aprovado.
+                    Quer esperar entrevistar os outros antes de decidir?"
 
-  👎 → Prepara reprovação: "Entendido. Preparo a devolutiva?"
-       (PEDE APROVAÇÃO — reprovação é sempre humana)
+  Não avançar → Prepara reprovação: "Entendido. Preparo a devolutiva?"
+                (PEDE APROVAÇÃO — reprovação é sempre humana)
 
-T+24h sem resposta: "Feedback da Ana ainda pendente. Bom / Médio / Ruim?"
+T+24h sem resposta: "Feedback da Ana ainda pendente."
 T+48h: "Último lembrete sobre Ana." (Entra no briefing como pendência)
 ```
 
@@ -278,17 +317,17 @@ T+48h: "Último lembrete sobre Ana." (Entra no briefing como pendência)
 ```
 T+0:   Pré-montar oferta com template padrão + dados do candidato
 T+0:   [Piloto] Apresentar rascunho: "Montei a proposta. Confirma e eu envio."
-T+3d:  "A proposta de Ana está aberta há 3 dias. Quer que eu envie um follow-up?"
+T+3d:  "A proposta de Ana está aberta há 3 dias. Quer que eu entre em contato com ela?"
 T+7d:  "Proposta sem resposta há 1 semana. Candidato pode estar avaliando outras."
 ```
 
 **Candidato excepcional (score ≥ 4.5):**
 ```
 T+0:   Notificação imediata com contexto de urgência:
-       "🚨 Ana Silva — score 4.8. Perfis assim somem em 48h.
+       "🚨 Ana Silva — score 4.8.
         Seus próximos slots livres são terça 14h e quinta 10h.
         Quer que eu agende com ela?"
-T+4h:  Se sem resposta: escalar com tom mais direto:
+T+8h:  Se sem resposta (fim do dia comercial):
        "Ainda sobre Ana (4.8). Agendo pra quinta 10h?"
 T+24h: Incluir no briefing como item vermelho
 ```
@@ -299,6 +338,7 @@ T+24h: Incluir no briefing como item vermelho
 - Usa `get_job_talent_timeline()` para calcular tempo em cada etapa
 - Compara com cadências definidas acima
 - Envia mensagens via `_queue_or_send()` (respeita horário comercial)
+- **Checa `inhire:stage_changed:{jt_id}`** antes de enviar (evita follow-up sobre candidato que acabou de ser movido por webhook)
 
 **Novo campo na conversa:** `conv.set_context("followup_timestamps", {job_talent_id: last_followup_ts})` para evitar spam.
 
@@ -307,64 +347,85 @@ T+24h: Incluir no briefing como item vermelho
 - `"normal"` — cadências padrão (acima)
 - `"aggressive"` — cadências 50% mais curtas
 
+**Auto-detecção:** Se recrutador ignora 3 follow-ups seguidos, baixar automaticamente para `gentle` e avisar: "Percebi que os lembretes estão frequentes. Vou reduzir."
+
 ---
 
 ## 5. Notificações
+
+### Controle de volume
+
+**Problema:** No autopilot com 3 vagas ativas, o recrutador pode receber 7-20 mensagens/dia. Sem controle, isso vira spam.
+
+**Solução:**
+
+1. **Consolidar ações automáticas em blocos** — em vez de 5 msgs separadas ("Movi X", "Screening de Y"), agrupar a cada 30min:
+```
+"🤖 Nos últimos 30 min:
+ • Movi Ana (4.6) e Pedro (4.3) para Entrevista
+ • Rodei screening em 5 candidatos de hunting
+ • Encontrei 2 matches no banco pra vaga UX"
+```
+
+2. **Cap unificado por dia:**
+   - Proativos (alertas, follow-ups): max 3/dia (já existe)
+   - Ações automáticas: max 5 blocos/dia
+   - Total: max 8 interações iniciadas pelo Eli/dia
+   - Briefing matinal e notificações de contratação não contam no cap
+
+3. **Snooze/Silenciar:**
+   - Botão `[🔇 Silenciar 2h]` em toda notificação proativa
+   - Comando "Eli, silencia" → pausa tudo por 4h
+   - "Silencia a vaga Dev Python" → pausa só aquela vaga
+   - Auto-backoff: se 5+ msgs sem resposta no mesmo dia → para e consolida tudo no briefing seguinte
+
+4. **Modo digest como alternativa:**
+   `notification_mode: "realtime" | "digest" | "hybrid"`
+   - realtime: tudo em tempo real (padrão)
+   - digest: uma msg às 17h com tudo do dia
+   - hybrid: urgentes em tempo real, resto no digest
 
 ### Em tempo real (imediatas, ambos os modos)
 
 | Evento | Mensagem |
 |---|---|
-| Candidato excepcional (≥ 4.5) | "🚨 [Nome] — score X.X. Perfis assim somem rápido." |
+| Candidato excepcional (≥ 4.5) | "🚨 [Nome] — score X.X. Slots livres: [horários]" |
 | Entrevista agendada | "📅 Entrevista com [Nome] agendada pra [data]. Kit enviado." |
-| Ação automática completada (Piloto) | "Movi [Nome] (X.X) para [Etapa] ✓" |
+| Bloco de ações automáticas (Piloto) | "🤖 Nos últimos 30min: [resumo consolidado]" |
 | Contratação detectada (webhook) | "🎉 [Nome] contratado(a)! Parabéns!" |
-| Candidato desistiu/declinou | "⚠️ [Nome] declinou da vaga [Vaga]." |
+| Circuit breaker ativado | "⚠️ Auto-advance pausado. Voltei a pedir aprovação." |
 | SLA expirando (3 dias restantes) | "⏰ Vaga [Nome] — SLA expira em 3 dias." |
 
-### Briefing matinal (9h BRT, consolidado)
+### Briefing matinal (9h BRT) — Two-tier
 
-Estrutura:
-
+**Mensagem principal (5-7 linhas):**
 ```
-☀️ Bom dia, [Nome]! Resumo das suas vagas:
+☀️ Bom dia! 3 vagas ativas, 2 precisam de você:
 
-[Para cada vaga ativa:]
-📋 *[Nome da Vaga]* — Dia [N] de [SLA] | [🟢/🟡/🔴]
-• Novos: X candidatos | Alto fit: Y | Total: Z
-• [O que Eli fez ontem: screening, match, movimentações]
-• [Etapa mais lenta: "Entrevista média 4.2 dias"]
+📋 *Dev Python* — 3 novos candidatos, 2 alto fit
+📋 *Designer UX* — SLA em 4 dias, shortlist pronto pra revisar
+📋 *QA Senior* — tudo em dia ✓
+
+[Ver detalhes]  [Ir pro shortlist do Designer]
+```
+
+**Detalhes (expandível via botão ou thread):**
+```
+📋 *Dev Python Senior* — Dia 12 de 30 | 🟢
+• Novos: 3 candidatos | Alto fit: 2 | Total: 18
+• Ontem: rodei screening em 5, movi Ana pra entrevista
+• Etapa mais lenta: Entrevista (média 4.2 dias)
 
 ⚡ *Preciso de você:*
-• [Lista de aprovações pendentes]
-• [Feedbacks de entrevista pendentes]
-• [Shortlists para revisar]
+• Feedback da entrevista de Ana (foi ontem 14h)
+• Shortlist do Designer UX (5 candidatos, pronto desde ontem)
 
-📊 *Métricas da semana:*
-• Tempo médio por etapa: Triagem X.Xd → Entrevista X.Xd → Offer X.Xd
-• Conversão: X% triagem→entrevista, Y% entrevista→offer
-• [Previsão: "No ritmo atual, fecha em ~N dias"]
+📊 *Métricas:*
+• Triagem 1.2d → Entrevista 4.2d → Offer 2.1d
+• No ritmo atual, Dev Python fecha em ~18 dias
 ```
 
-**Gate:** só envia se há novidades ou pendências. Se tudo está parado e não há ação necessária, não envia briefing vazio.
-
-### Implementação
-
-**Expandir `_daily_briefing()` no ProactiveMonitor:**
-- Novo formato com seções separadas (fez / precisa de você / métricas)
-- Incluir audit log das ações automáticas das últimas 24h
-- Incluir métricas de velocidade e conversão
-
-**Novo: audit log Redis:**
-```
-Key: inhire:audit:{recruiter_id}:{date}
-TTL: 30 dias
-Value: [
-    {"ts": "...", "action": "auto_advance", "job": "...", "candidate": "...", "detail": "score 4.3"},
-    {"ts": "...", "action": "auto_screening", "job": "...", "count": 5},
-    {"ts": "...", "action": "smart_match", "job": "...", "found": 12, "high_fit": 5},
-]
-```
+**Gate:** só envia se há novidades ou pendências. Não envia briefing vazio.
 
 ---
 
@@ -378,7 +439,7 @@ Expandir `DEFAULT_SETTINGS` em `user_mapping.py`:
 "auto_advance_threshold": 4.0,            # Score mínimo para auto-advance (Piloto)
 
 # Entrevistas
-"preferred_interview_slots": [],           # Ex: [{"day": "tue", "hour": 14}, {"day": "thu", "hour": 10}]
+"preferred_interview_slots": [],           # [{"day": "tue", "hour": 14}, ...]
 "default_interview_duration": 60,          # Minutos
 
 # Follow-up
@@ -387,16 +448,17 @@ Expandir `DEFAULT_SETTINGS` em `user_mapping.py`:
 # Notificações
 "realtime_notifications": True,            # Notificações em tempo real
 "daily_briefing": True,                    # Briefing matinal
+"notification_mode": "realtime",           # "realtime" | "digest" | "hybrid"
+"muted_until": null,                       # Timestamp até quando está silenciado
 ```
 
-**Campos por vaga (no contexto da conversa, não no user_mapping):**
+**Campos por vaga (no contexto da conversa):**
 ```python
 conv.set_context("interview_owners", {
     "Entrevista com Liderança": {"name": "João Silva", "email": "joao@empresa.com"},
     "Entrevista Técnica": {"name": "Pedro Dev", "email": "pedro@empresa.com"},
 })
 ```
-Eli pergunta uma vez quem faz cada entrevista e salva. Nas próximas vezes, usa direto.
 
 ---
 
@@ -407,61 +469,141 @@ Eli pergunta uma vez quem faz cada entrevista e salva. Nas próximas vezes, usa 
 ```python
 {
     "name": "modo_autonomia",
-    "description": "Troca entre modo copiloto e piloto automático, ou ajusta threshold de auto-advance.",
+    "description": "Troca entre modo copiloto e piloto automático, ou ajusta threshold/silenciar.",
     "input_schema": {
         "type": "object",
         "properties": {
             "mode": {"type": "string", "description": "'copilot' ou 'autopilot'"},
             "threshold": {"type": "number", "description": "Score mínimo para auto-advance (0-5)"},
+            "mute_hours": {"type": "number", "description": "Silenciar notificações por N horas"},
+            "mute_job_id": {"type": "string", "description": "Silenciar notificações de uma vaga específica"},
         },
     },
 }
 ```
 
-Quando recrutador diz "modo piloto automático", "confia em mim", "pode ir sozinho", "quero mais autonomia" → Claude chama `modo_autonomia` com `mode: "autopilot"`.
+---
 
-Quando diz "volta pro copiloto", "prefiro aprovar", "menos autonomia" → `mode: "copilot"`.
+## 8. Wrapper de Autonomia
 
-Quando diz "avança quem tiver acima de 4.5" → `threshold: 4.5`.
+**Novo helper `_request_or_auto_approve`** centraliza toda decisão de aprovação:
+
+```python
+async def _request_or_auto_approve(conv, app, channel_id, action, title, details,
+                                    callback_id, execute_fn):
+    """Decide se executa automaticamente ou pede aprovação, baseado no modo."""
+    user = app.state.user_mapping.get_user(conv.user_id) or {}
+    
+    if _should_auto_approve(user, action):
+        await execute_fn()
+        app.state.audit_log.log_action(conv.user_id, action, ...)
+        # Notificação com botão [Desfazer]
+    else:
+        await _send_approval(conv, slack, channel_id, title, details, callback_id)
+        conv.state = FlowState.WAITING_*_APPROVAL
+```
+
+Isso evita que o FlowState entre em WAITING quando a ação é auto-aprovada.
 
 ---
 
-## 8. Arquivos a Modificar
+## 9. Proteções Técnicas
+
+### Webhook thundering herd (import de 50 candidatos)
+
+```python
+_SCREENING_SEMAPHORE = asyncio.Semaphore(5)
+
+async def _auto_screen_candidate(app, job_talent_id):
+    async with _SCREENING_SEMAPHORE:
+        await app.state.inhire.manual_screening(job_talent_id)
+```
+
+### Race condition cron vs webhook
+
+O webhook seta `inhire:stage_changed:{jt_id}` com TTL 2h ao processar mudança de etapa. O cron checa essa key antes de enviar follow-up — se existe, pula (candidato moveu recentemente).
+
+### Cron vs DM handler — conversation.save
+
+O `_send_proactive` deve adquirir o lock do user antes de modificar a conversa, ou skip history se lock indisponível.
+
+### Chain pós-vaga vs webhook
+
+Redis key `inhire:chain_active:{job_id}` com TTL 5min. Webhook checa antes de disparar auto-screening. Se chain ativa, adiciona candidato a `inhire:screening_pending:{job_id}` (lista Redis). Chain processa a fila ao finalizar.
+
+---
+
+## 10. Compliance LGPD
+
+### Obrigatório antes de produção
+
+1. **RIPD** (Relatório de Impacto à Proteção de Dados) — elaborar proativamente
+2. **DPA com Anthropic** incluindo cláusulas-padrão da ANPD (Resolução 19/2024)
+3. **Aviso de IA** no formulário de inscrição do InHire
+4. **Canal de revisão humana** — email dedicado para candidatos contestarem decisões
+
+### Pseudonimização
+
+Antes de enviar dados ao Claude, substituir nomes por IDs quando possível. Manter mapeamento local.
+
+### Comunicações externas (autopilot)
+
+- Todo WhatsApp/email automatizado inclui rodapé: "Mensagem assistida por inteligência artificial. Para revisão humana: [email]"
+- Templates pré-aprovados pela empresa (não texto livre do Claude sem guardrail)
+- Log completo no audit log
+- Opt-out sem prejuízo à candidatura
+
+### Art. 20 LGPD (decisão automatizada)
+
+O candidato pode solicitar revisão humana de qualquer decisão automatizada. A empresa deve fornecer explicação dos critérios utilizados.
+
+---
+
+## 11. Arquivos a Modificar
 
 | Arquivo | Mudança |
 |---|---|
-| `services/user_mapping.py` | +4 campos de autonomia em DEFAULT_SETTINGS |
-| `services/proactive_monitor.py` | Cadeia pós-vaga, follow-up por etapa, briefing expandido, audit log |
-| `services/learning.py` | Motor de confiança (calibração semanal, reversões) |
+| `services/user_mapping.py` | +7 campos (autonomia, entrevistas, notificações) |
+| `services/audit_log.py` | NOVO — registro de ações autônomas |
+| `services/proactive_monitor.py` | Follow-up por etapa, briefing two-tier, consolidação, snooze |
+| `services/learning.py` | Motor de confiança + circuit breaker |
 | `services/claude_client.py` | +1 tool `modo_autonomia`, SYSTEM_PROMPT com modos |
-| `routers/handlers/job_creation.py` | `_post_creation_chain()`, auto-publish no Piloto |
-| `routers/handlers/candidates.py` | Auto-advance no Piloto, auto-screening hunting |
-| `routers/handlers/hunting.py` | Smart Match trigger automático pós-vaga |
-| `routers/handlers/helpers.py` | `_should_auto_approve()` helper que checa modo + threshold |
-| `routers/slack.py` | Handler pra `modo_autonomia`, check de modo nos approval flows |
-| `routers/webhooks.py` | Auto-screening em JOB_TALENT_ADDED, enrich audit log |
+| `routers/handlers/job_creation.py` | `_post_creation_chain()` (sequencial→paralelo) |
+| `routers/handlers/candidates.py` | Auto-advance via `_request_or_auto_approve` |
+| `routers/handlers/interviews.py` | Smart scheduling, micro-feedback, botão desfazer |
+| `routers/handlers/helpers.py` | `_should_auto_approve`, `_request_or_auto_approve` |
+| `routers/slack.py` | Handler `modo_autonomia`, batch approval, snooze |
+| `routers/webhooks.py` | Auto-screening com semáforo, flag `stage_changed` |
 
 ---
 
-## 9. Métricas de Sucesso
+## 12. Métricas de Sucesso
 
-| Métrica | Baseline (Level 2) | Meta (v2) |
+| Métrica | Baseline (hoje) | Meta (v2) |
 |---|---|---|
-| Pontos de aprovação por contratação | ~13 | 3-5 |
+| Pontos de aprovação por contratação | ~13 | 2-5 |
 | Tempo vaga criada → recebendo candidatos | 1-3 dias | < 5 minutos |
 | Tempo shortlist pronto → entrevista | 3-10 dias | 1-2 dias |
 | Tempo pós-entrevista → feedback | 2-5 dias | < 24 horas |
 | Mensagens do recrutador por contratação | ~50 | ~15 |
 | Ações automáticas por vaga | ~5 | ~25 |
+| Mensagens do Eli por dia (cap) | sem cap | max 8 + briefing |
 
 ---
 
-## 10. Riscos e Mitigações
+## 13. Riscos e Mitigações
 
 | Risco | Mitigação |
 |---|---|
-| Auto-advance move candidato errado | Reversão fácil + ajuste de threshold + audit log |
-| Recrutador perde visibilidade | Briefing matinal mostra tudo + notificações em tempo real |
-| Follow-up excessivo irrita recrutador | `followup_intensity` configurável + respeita daily cap |
+| Auto-advance move candidato errado | Circuit breaker (30% reversões → desliga) + botão [Desfazer] + audit log |
+| Recrutador perde visibilidade | Briefing two-tier + audit log + notificações consolidadas |
+| Follow-up excessivo irrita recrutador | Auto-backoff + snooze + `followup_intensity` configurável + cap 8/dia |
+| Score InHire descalibra | Circuit breaker detecta e desliga auto-advance automaticamente |
 | Smart Match encontra candidatos ruins | Screening filtra antes de apresentar + recrutador revisa shortlist |
-| Modo piloto em recrutador inexperiente | Default é copiloto, piloto requer ativação explícita |
+| Modo piloto com poucos dados | Aviso explícito se < 15 decisões + confirmação com botões |
+| 50 webhooks simultâneos (import CSV) | Semáforo(5) + fila Redis |
+| Cron envia follow-up sobre candidato recém-movido | Redis key `stage_changed:{jt_id}` TTL 2h |
+| Race condition conversation.save | Lock no `_send_proactive` |
+| Comunicação externa sem consentimento | Templates pré-aprovados + rodapé IA + opt-out + LGPD Art. 7º V/IX |
+| Viés algorítmico no motor de confiança | Auditoria trimestral + circuit breaker de disparidade (futuro) |
+| Transferência internacional de dados | DPA com Anthropic + pseudonimização |

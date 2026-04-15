@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Transform Eli from a reactive assistant with 13 approval points into an autonomous copilot (5 approvals) / autopilot (2 approvals) that executes the full post-creation chain automatically and follows up intelligently per pipeline stage.
+**Goal:** Transform Eli from a reactive assistant with 13 approval points into an autonomous copilot (5 approvals, with batch) / autopilot (2 approvals) that executes the full post-creation chain automatically, follows up intelligently per pipeline stage, and protects against notification fatigue and scoring errors.
 
-**Architecture:** Two modes (`copilot`/`autopilot`) stored per-recruiter in Redis via `user_mapping`. A new `_should_auto_approve(conv, action)` helper centralizes all autonomy decisions. The `ProactiveMonitor` gains stage-specific follow-ups and an audit log. A confidence engine in `LearningService` calibrates auto-advance thresholds weekly.
+**Architecture:** Two modes (`copilot`/`autopilot`) stored per-recruiter in Redis via `user_mapping`. A `_request_or_auto_approve` wrapper centralizes all autonomy decisions. The `ProactiveMonitor` gains stage-specific follow-ups, consolidated notifications, and snooze. A confidence engine with circuit breaker in `LearningService` calibrates auto-advance thresholds weekly. An `AuditLog` service tracks all autonomous actions for the two-tier daily briefing.
+
+**Specialist review changes incorporated:** circuit breaker (30% reversals → disable), consolidated notifications (batch every 30min), snooze/mute, two-tier briefing, undo buttons (1h TTL), sequential chain (config before parallel), webhook semaphore, stage_changed Redis flag, auto-backoff on follow-ups, LGPD pseudonymization.
 
 **Tech Stack:** Python 3.12, FastAPI, Redis, Anthropic SDK (claude-sonnet-4-20250514), APScheduler, httpx.
 
@@ -1410,7 +1412,296 @@ git commit -m "feat: autonomy-aware system prompt and dynamic context injection"
 
 ---
 
-### Task 12: Run Full Test Suite and Final Verification
+### Task 12: Circuit Breaker for Auto-Advance (Specialist Review)
+
+**Files:**
+- Modify: `app/services/learning.py` (extend confidence engine)
+- Modify: `app/routers/handlers/helpers.py` (check circuit breaker in `_should_auto_approve`)
+
+- [ ] **Step 1: Add circuit breaker fields to confidence engine**
+
+In `app/services/learning.py`, update `_default_confidence` to include:
+
+```python
+    def _default_confidence(self) -> dict:
+        return {
+            "auto_advance_threshold": 4.0,
+            "learned_threshold": None,
+            "decisions_count": 0,
+            "approval_rate_above_threshold": 0.0,
+            "reversals_count": 0,
+            "reversals_recent": 0,
+            "auto_advances_recent": 0,
+            "last_calibration": None,
+            "circuit_breaker_active": False,
+        }
+```
+
+Add methods:
+
+```python
+    def record_auto_advance(self, recruiter_id: str):
+        """Record that an auto-advance happened."""
+        data = self.get_confidence(recruiter_id)
+        data["auto_advances_recent"] = data.get("auto_advances_recent", 0) + 1
+        self._save_confidence(recruiter_id, data)
+
+    def check_circuit_breaker(self, recruiter_id: str) -> bool:
+        """Returns True if circuit breaker is active (auto-advance should be disabled)."""
+        data = self.get_confidence(recruiter_id)
+        if data.get("circuit_breaker_active", False):
+            return True
+        recent_advances = data.get("auto_advances_recent", 0)
+        recent_reversals = data.get("reversals_recent", 0)
+        if recent_advances >= 5 and recent_reversals / max(recent_advances, 1) > 0.3:
+            data["circuit_breaker_active"] = True
+            self._save_confidence(recruiter_id, data)
+            return True
+        return False
+
+    def reset_circuit_breaker(self, recruiter_id: str):
+        """Reset circuit breaker (called by recruiter or weekly calibration)."""
+        data = self.get_confidence(recruiter_id)
+        data["circuit_breaker_active"] = False
+        data["reversals_recent"] = 0
+        data["auto_advances_recent"] = 0
+        self._save_confidence(recruiter_id, data)
+```
+
+- [ ] **Step 2: Integrate circuit breaker in `_should_auto_approve`**
+
+In `app/routers/handlers/helpers.py`, update `_should_auto_approve` to check circuit breaker for move actions:
+
+```python
+def _should_auto_approve(user: dict, action: str, learning=None, recruiter_id: str = "") -> bool:
+    if action in _ALWAYS_REQUIRE_APPROVAL:
+        return False
+    if action in _ALWAYS_AUTO:
+        return True
+    mode = user.get("autonomy_mode", "copilot")
+    if mode == "autopilot" and action in _AUTOPILOT_ONLY:
+        # Check circuit breaker for move actions
+        if action in ("move_candidates", "auto_advance") and learning and recruiter_id:
+            if learning.check_circuit_breaker(recruiter_id):
+                return False
+        return True
+    return False
+```
+
+- [ ] **Step 3: Verify compilation and run tests**
+
+Run: `cd app && python -m py_compile services/learning.py && python -m py_compile routers/handlers/helpers.py && python -m pytest tests/ -v --tb=short`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add app/services/learning.py app/routers/handlers/helpers.py
+git commit -m "feat: circuit breaker for auto-advance (30% reversals → disable)"
+```
+
+---
+
+### Task 13: Notification Consolidation and Snooze (Specialist Review)
+
+**Files:**
+- Modify: `app/services/user_mapping.py`
+- Modify: `app/routers/handlers/helpers.py`
+- Modify: `app/routers/slack.py`
+
+- [ ] **Step 1: Add notification fields to user_mapping**
+
+Add to `DEFAULT_SETTINGS`:
+
+```python
+        "notification_mode": "realtime",   # "realtime" | "digest" | "hybrid"
+        "muted_until": None,               # ISO timestamp or None
+```
+
+- [ ] **Step 2: Add `_is_muted` and `_send_consolidated` helpers**
+
+In `app/routers/handlers/helpers.py`, add:
+
+```python
+def _is_muted(user: dict) -> bool:
+    """Check if recruiter has muted notifications."""
+    muted_until = user.get("muted_until")
+    if not muted_until:
+        return False
+    from datetime import datetime, timezone
+    try:
+        muted_dt = datetime.fromisoformat(muted_until)
+        return datetime.now(timezone.utc) < muted_dt
+    except Exception:
+        return False
+```
+
+- [ ] **Step 3: Add mute handling to `modo_autonomia` tool handler**
+
+In the existing `modo_autonomia` handler in `app/routers/slack.py`, add after threshold handling:
+
+```python
+        mute_hours = tool_input.get("mute_hours")
+        if mute_hours is not None:
+            from datetime import datetime, timedelta, timezone
+            mute_until = (datetime.now(timezone.utc) + timedelta(hours=float(mute_hours))).isoformat()
+            user_mapping.update_settings(conv.user_id, muted_until=mute_until)
+            await _send(
+                conv, slack, channel_id,
+                f"🔇 Notificações silenciadas por {int(mute_hours)}h. "
+                f"Tudo vai pro briefing. Pra reativar: \"Eli, volta as notificações\"",
+            )
+```
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+cd app && python -m py_compile services/user_mapping.py && python -m py_compile routers/handlers/helpers.py && python -m py_compile routers/slack.py && echo OK
+git add app/services/user_mapping.py app/routers/handlers/helpers.py app/routers/slack.py
+git commit -m "feat: notification snooze/mute + consolidated notification support"
+```
+
+---
+
+### Task 14: Undo Button and Batch Approval (Specialist Review)
+
+**Files:**
+- Modify: `app/routers/slack.py` (approval handler)
+- Modify: `app/routers/handlers/helpers.py`
+
+- [ ] **Step 1: Add `_send_with_undo` helper**
+
+In `app/routers/handlers/helpers.py`:
+
+```python
+async def _send_with_undo(conv, slack, channel_id: str, text: str, undo_callback_id: str):
+    """Send message with an inline [Desfazer] button (1h TTL)."""
+    conv.add_message("assistant", text)
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Desfazer"},
+                "value": undo_callback_id,
+                "action_id": "adjust",
+            }],
+        },
+    ]
+    await slack.send_message(channel_id, text, blocks=blocks)
+```
+
+- [ ] **Step 2: Add undo handler in slack.py**
+
+In `_handle_approval`, add a new elif for undo callbacks:
+
+```python
+        elif callback_id.startswith("undo_auto_advance:"):
+            jt_id = callback_id.replace("undo_auto_advance:", "")
+            # Get previous stage from context
+            prev_stage = conv.get_context(f"pre_advance_stage:{jt_id}")
+            if prev_stage:
+                try:
+                    await inhire.move_candidate(jt_id, prev_stage)
+                    learning.record_reversal(user_id)
+                    await _send(conv, slack, channel_id, "Pronto, voltei o candidato pra etapa anterior. ✓")
+                except Exception as e:
+                    await _send(conv, slack, channel_id, f"Não consegui desfazer: {e}")
+            else:
+                await _send(conv, slack, channel_id, "Não encontrei a etapa anterior pra reverter.")
+```
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+cd app && python -m py_compile routers/handlers/helpers.py && python -m py_compile routers/slack.py && echo OK
+git add app/routers/handlers/helpers.py app/routers/slack.py
+git commit -m "feat: undo button for auto-actions + batch approval support"
+```
+
+---
+
+### Task 15: Webhook Protections (Specialist Review)
+
+**Files:**
+- Modify: `app/routers/webhooks.py`
+
+- [ ] **Step 1: Add semaphore and chain protection**
+
+At the top of `app/routers/webhooks.py`:
+
+```python
+import asyncio
+
+_SCREENING_SEMAPHORE = asyncio.Semaphore(5)
+```
+
+- [ ] **Step 2: Update `_handle_talent_added` with protections**
+
+```python
+async def _handle_talent_added(app, payload: dict):
+    job_id = payload.get("jobId", "")
+    talent_id = payload.get("talentId", "")
+    source = payload.get("source", "")
+    job_talent_id = f"{job_id}*{talent_id}" if job_id and talent_id else ""
+
+    if source in ("manual", "api") and job_talent_id:
+        # Check if post-creation chain is running (avoid duplicate screening)
+        try:
+            import redis as redis_lib
+            from config import get_settings
+            r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+            if r.get(f"inhire:chain_active:{job_id}"):
+                # Chain is running — queue for later
+                r.rpush(f"inhire:screening_pending:{job_id}", job_talent_id)
+                r.expire(f"inhire:screening_pending:{job_id}", 600)
+                logger.info("Queued screening for %s (chain active)", job_talent_id)
+                return
+        except Exception:
+            pass
+
+        # Dispatch with semaphore
+        async def _screen():
+            async with _SCREENING_SEMAPHORE:
+                try:
+                    inhire = app.state.inhire
+                    result = await inhire.manual_screening(job_talent_id)
+                    if not result:
+                        await inhire.analyze_resume(job_talent_id)
+                except Exception as e:
+                    logger.warning("Auto-screening failed for %s: %s", job_talent_id, e)
+
+        asyncio.create_task(_screen())
+```
+
+- [ ] **Step 3: Add `stage_changed` flag to `_handle_stage_added`**
+
+In the existing `_handle_stage_added`, add at the beginning:
+
+```python
+    # Flag for cron to skip follow-up on recently moved candidates
+    try:
+        import redis as redis_lib
+        from config import get_settings
+        r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+        jt_id = payload.get("jobTalentId") or f"{payload.get('jobId', '')}*{payload.get('talentId', '')}"
+        if jt_id:
+            r.set(f"inhire:stage_changed:{jt_id}", "1", ex=7200)
+    except Exception:
+        pass
+```
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+cd app && python -m py_compile routers/webhooks.py && echo OK
+git add app/routers/webhooks.py
+git commit -m "feat: webhook protections (semaphore, chain flag, stage_changed)"
+```
+
+---
+
+### Task 16: Run Full Test Suite and Final Verification
 
 **Files:**
 - All modified files
@@ -1430,6 +1721,7 @@ python -m py_compile services/claude_client.py && \
 python -m py_compile services/proactive_monitor.py && \
 python -m py_compile routers/handlers/helpers.py && \
 python -m py_compile routers/handlers/job_creation.py && \
+python -m py_compile routers/handlers/interviews.py && \
 python -m py_compile routers/slack.py && \
 python -m py_compile routers/webhooks.py && \
 python -m py_compile main.py && \
@@ -1440,14 +1732,20 @@ echo "ALL OK"
 
 Add to the melhorias table:
 ```
-| 76 | **Autonomia v2 — dois modos** — copiloto (5 aprovações) e piloto automático (2 aprovações) | ✅ | 44 |
-| 77 | **Cadeia pós-vaga** — screening + scorecard + form + smart match + linkedin automáticos | ✅ | 44 |
-| 78 | **Motor de confiança** — threshold de auto-advance aprendido + calibração semanal | ✅ | 44 |
-| 79 | **Follow-up por etapa** — cobrança progressiva pós-entrevista, offer, candidato excepcional | ✅ | 44 |
-| 80 | **Audit log** — registro de ações autônomas, exibido no briefing matinal | ✅ | 44 |
-| 81 | **Briefing expandido** — seções "fez / precisa de você / métricas" + audit log | ✅ | 44 |
-| 82 | **Auto-screening webhook** — hunting candidates triados automaticamente no JOB_TALENT_ADDED | ✅ | 44 |
-| 83 | **Smart scheduling** — proposta de horários baseada em slots preferidos + micro-feedback pós-entrevista | ✅ | 44 |
+| 76 | **Autonomia v2 — dois modos** — copiloto (5 aprovações, batch) + piloto automático (2 aprovações) | ✅ | 44 |
+| 77 | **Cadeia pós-vaga** — config sequencial → paralelo(match, linkedin) + msg orientada a resultado | ✅ | 44 |
+| 78 | **Motor de confiança** — threshold aprendido + calibração semanal + circuit breaker (30% reversões) | ✅ | 44 |
+| 79 | **Follow-up por etapa** — cobrança progressiva + auto-backoff (ignora 3 → reduz intensidade) | ✅ | 44 |
+| 80 | **Audit log** — registro de ações autônomas, exibido no briefing two-tier | ✅ | 44 |
+| 81 | **Briefing two-tier** — 5-7 linhas + [Ver detalhes], orientado a ação | ✅ | 44 |
+| 82 | **Auto-screening webhook** — semáforo(5) + chain_active flag + fila pendente | ✅ | 44 |
+| 83 | **Smart scheduling** — slots preferidos + propostas concretas + micro-feedback | ✅ | 44 |
+| 84 | **Snooze/silenciar** — botão + comando + por vaga + auto-backoff | ✅ | 44 |
+| 85 | **Notificações consolidadas** — blocos 30min + cap 8/dia + digest mode | ✅ | 44 |
+| 86 | **Botão [Desfazer]** — em toda ação auto, TTL 1h | ✅ | 44 |
+| 87 | **Batch approval** — copiloto agrupa 3+ ações [Confirma tudo] | ✅ | 44 |
+| 88 | **Proteções webhook** — semáforo + chain flag + stage_changed | ✅ | 44 |
+| 89 | **LGPD** — pseudonimização + rodapé IA + canal revisão | ✅ | 44 |
 ```
 
 - [ ] **Step 4: Update DIARIO_DO_PROJETO.md with session 44**
