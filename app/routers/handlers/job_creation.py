@@ -1,7 +1,7 @@
 import logging
 
 from services.conversation import FlowState
-from routers.handlers.helpers import _send, _send_approval
+from routers.handlers.helpers import _send, _send_approval, _request_or_auto_approve
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -119,11 +119,28 @@ async def _publish_job(conv, app, channel_id: str, job_id: str):
         conv.set_context("publish_boards", available_boards)
         conv.set_context("publish_career_page_id", career_page_id)
 
-        await _send_approval(
-            conv, slack, channel_id,
+        async def _do_publish():
+            try:
+                result = await inhire.publish_job(
+                    job_id=job_id,
+                    career_page_id=career_page_id,
+                    display_name=job_name,
+                    active_job_boards=available_boards,
+                )
+                published = result.get("activeJobBoards", available_boards)
+                channels_str = ", ".join(b.capitalize() for b in published) if published else "Página de carreiras"
+                await _send(conv, slack, channel_id, f"✅ Vaga *{job_name}* publicada em: {channels_str}!")
+            except Exception as exc:
+                logger.exception("Erro ao publicar vaga: %s", exc)
+                await _send(conv, slack, channel_id, f"❌ Erro ao publicar: {exc}")
+
+        await _request_or_auto_approve(
+            conv, app, channel_id,
+            action="publish_job",
             title="Publicar vaga?",
             details=f"Publicar *{job_name}* em: {', '.join(all_channels)}",
             callback_id="publish_job_approval",
+            execute_fn=_do_publish,
         )
 
     except Exception as e:

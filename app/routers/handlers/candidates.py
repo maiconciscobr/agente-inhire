@@ -2,7 +2,7 @@ import json
 import logging
 
 from services.conversation import FlowState
-from routers.handlers.helpers import _send, _send_approval, _suggest_next_action, _talent_phone
+from routers.handlers.helpers import _send, _send_approval, _request_or_auto_approve, _suggest_next_action, _talent_phone
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -195,16 +195,18 @@ async def _build_shortlist(conv, app, channel_id: str):
     await _send(conv, slack, channel_id, summary)
 
     next_stage_name = conv.get_context("next_stage_name", "próxima etapa")
-    await _send_approval(
-        conv, slack, channel_id,
+    await _request_or_auto_approve(
+        conv, app, channel_id,
+        action="move_candidates",
         title=f"Shortlist — {job_name}",
         details=(
             f"{len(shortlist)} candidatos selecionados.\n"
             f"Ao aprovar, serão movidos para: *{next_stage_name}*"
         ),
         callback_id="shortlist_approval",
+        execute_fn=lambda: _move_approved_candidates(conv, app, channel_id),
+        flow_state=FlowState.WAITING_SHORTLIST_APPROVAL,
     )
-    conv.state = FlowState.WAITING_SHORTLIST_APPROVAL
 
 
 async def _move_approved_candidates(conv, app, channel_id: str):
