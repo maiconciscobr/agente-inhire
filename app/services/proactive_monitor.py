@@ -432,25 +432,74 @@ class ProactiveMonitor:
         if not has_news:
             return  # Nothing new, don't bother the recruiter
 
-        # Compose and send
-        text = "Bom dia! ☀️ Resumo das suas vagas:\n\n" + "\n".join(lines)
+        # --- Tier 1: summary (5-7 lines) ---
+        total_jobs = len(user_jobs)
+        jobs_needing_attention = sum(1 for line in lines if "⚠️" in line or "alto fit" in line or "novo" in line or "sem movimento" in line)
+        total_new = sum(
+            int(w) for line in lines for w in line.split()
+            if w.isdigit() and "novo" in line
+        ) if lines else 0
+        # Count action items: high fit candidates + SLA warnings
+        action_new = sum(1 for line in lines if "novo" in line or "alto fit" in line)
+        action_sla = sum(1 for line in lines if "SLA" in line)
 
-        # Add suggestion based on most urgent item
-        urgent_jobs = [j for j in user_jobs if j.get("talentsCount", 0) >= DEFAULT_SHORTLIST_THRESHOLD]
-        if urgent_jobs:
-            text += f"\n\nQuer que eu monte o shortlist da vaga de *{urgent_jobs[0].get('name')}*?"
+        summary_lines = []
+        attention_phrase = f"{jobs_needing_attention} precisam de você" if jobs_needing_attention else "tudo em dia"
+        summary_lines.append(f"☀️ Bom dia! {total_jobs} vaga{'s' if total_jobs != 1 else ''} ativa{'s' if total_jobs != 1 else ''}, {attention_phrase}:")
+        summary_lines.append("")
 
-        # Add audit log section (what Eli did automatically yesterday)
+        for line in lines:
+            # Convert bullet lines to 📋 format
+            formatted = line.replace("• *", "📋 *", 1)
+            summary_lines.append(formatted)
+
+        # Action items summary
+        action_items = []
+        # Count pending interviews: look for follow-up candidates in stale lines
+        for job in user_jobs:
+            if job.get("talentsCount", 0) >= DEFAULT_SHORTLIST_THRESHOLD:
+                action_items.append(f"shortlist pra revisar (1)")
+                break
+        if action_items:
+            summary_lines.append("")
+            summary_lines.append(f"⚡ Pendente: {', '.join(action_items)}")
+
+        # Audit log section appears in the summary too
+        audit_text_for_summary = None
         try:
             from services.audit_log import AuditLog
             audit = AuditLog()
-            audit_text = audit.format_for_briefing(slack_user_id)
-            if audit_text:
-                text += f"\n\n🤖 *O que eu fiz ontem:*\n{audit_text}\n"
+            audit_text_for_summary = audit.format_for_briefing(slack_user_id)
+            if audit_text_for_summary:
+                summary_lines.append(f"\n🤖 *O que eu fiz ontem:*\n{audit_text_for_summary}")
         except Exception:
             pass
 
-        await self._send_proactive(slack_user_id, channel_id, text,
+        summary_lines.append("")
+        summary_lines.append("Responda *detalhes* pra ver o relatório completo.")
+
+        summary_text = "\n".join(summary_lines)
+
+        # --- Tier 2: full details (stored in context, sent only on request) ---
+        details_text = "☀️ *Relatório Completo — Briefing Diário*\n\n" + "\n".join(lines)
+
+        urgent_jobs = [j for j in user_jobs if j.get("talentsCount", 0) >= DEFAULT_SHORTLIST_THRESHOLD]
+        if urgent_jobs:
+            details_text += f"\n\nQuer que eu monte o shortlist da vaga de *{urgent_jobs[0].get('name')}*?"
+
+        if audit_text_for_summary:
+            details_text += f"\n\n🤖 *O que eu fiz ontem:*\n{audit_text_for_summary}\n"
+
+        # Store details in conversation context for retrieval when recruiter asks
+        if self.conversations:
+            try:
+                conv = self.conversations.get_or_create(slack_user_id, channel_id)
+                conv.set_context("pending_briefing_details", details_text)
+                self.conversations.save(conv)
+            except Exception as e:
+                logger.warning("Não consegui salvar detalhes do briefing no contexto: %s", e)
+
+        await self._send_proactive(slack_user_id, channel_id, summary_text,
                                    alert_type="daily_briefing")
         self._mark_briefing_sent(slack_user_id)
         logger.info("Briefing enviado para %s", inhire_name or slack_user_id)

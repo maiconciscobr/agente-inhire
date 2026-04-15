@@ -13,7 +13,7 @@ from services.conversation import FlowState
 
 # Extracted handler modules (refactored session 26)
 from routers.handlers.helpers import (
-    _send, _send_approval, _resolve_job_id, _build_dynamic_context,
+    _send, _send_approval, _request_or_auto_approve, _resolve_job_id, _build_dynamic_context,
     _suggest_next_action, _tool_not_available, _talent_phone,
     _NOT_AVAILABLE_MESSAGES, _INHIRE_GUIDES,
 )
@@ -299,6 +299,16 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
         if "ativar comunicação" in text_lower or "ativar comunicacao" in text_lower:
             user_mapping.set_comms_enabled(user_id, True)
             await _send(conv, slack, channel_id, "Comunicação automática com candidatos *ativada*! ✅")
+            return
+
+        # Show full briefing details if recruiter requests them
+        if text_lower.strip() in ("detalhes", "detalhe", "ver detalhes", "relatório completo", "relatorio completo"):
+            details = conv.get_context("pending_briefing_details")
+            if details:
+                conv.set_context("pending_briefing_details", None)
+                await _send(conv, slack, channel_id, details)
+            else:
+                await _send(conv, slack, channel_id, "Não tenho um relatório pendente no momento. Quer ver o status de alguma vaga específica?")
             return
 
         # Route by state
@@ -1366,13 +1376,31 @@ async def _handle_send_whatsapp(conv, app, channel_id: str, tool_input: dict):
         "candidate_name": c_name,
     })
 
-    await _send_approval(
-        conv, slack, channel_id,
+    async def _do_send_whatsapp():
+        try:
+            await inhire.send_whatsapp(phone, msg_text)
+            await _send(conv, slack, channel_id, f"✅ WhatsApp enviado pra *{c_name}*!")
+        except WhatsAppWindowExpired:
+            await _send(
+                conv, slack, channel_id,
+                f"Não consegui enviar — *{c_name}* não interagiu com o WhatsApp do InHire nas últimas 24h.",
+            )
+        except WhatsAppInvalidPhone:
+            await _send(conv, slack, channel_id, f"O telefone de *{c_name}* não parece válido pra WhatsApp.")
+        except Exception as exc:
+            logger.exception("Erro WhatsApp: %s", exc)
+            await _send(conv, slack, channel_id, "Erro ao enviar WhatsApp. Tenta de novo em alguns minutos?")
+        conv.set_context("whatsapp_pending", None)
+
+    await _request_or_auto_approve(
+        conv, app, channel_id,
+        action="send_whatsapp",
         title=f"WhatsApp para {c_name}",
         details=f"📱 *Para:* {phone}\n\n{msg_text}",
         callback_id="whatsapp_free_approval",
+        execute_fn=_do_send_whatsapp,
+        flow_state=FlowState.WAITING_WHATSAPP_APPROVAL,
     )
-    conv.state = FlowState.WAITING_WHATSAPP_APPROVAL
 
 
 # APPROVAL HANDLER
