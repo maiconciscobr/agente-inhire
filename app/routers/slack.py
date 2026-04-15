@@ -1434,31 +1434,8 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
                     conv.set_context("current_job_name", title)
                     conv.set_context("job_stages", result.get("stages", []))
 
-                    stages = result.get("stages", [])
-                    stage_info = "\n".join(
-                        f"  {s['order']}. {s['name']}" for s in stages[:6]
-                    ) if stages else "  (pipeline padrão)"
-
-                    await _send(
-                        conv, slack, channel_id,
-                        f"✅ Pronto, vaga criada!\n"
-                        f"*Nome:* {title}\n"
-                        f"*ID:* `{job_id}`\n"
-                        f"*Status:* {result.get('status')}\n"
-                        f"*Pipeline:*\n{stage_info}\n\n"
-                        "Vou ficar de olho nos candidatos e te aviso quando tiver gente boa!"
-                        + _suggest_next_action(conv, total_candidates=0),
-                    )
-                    # Guide: what the recruiter still needs to do in InHire
-                    await _send(
-                        conv, slack, channel_id,
-                        "⚠️ *Pra completar a vaga, você ainda precisa configurar no InHire:*\n\n"
-                        f"• *Divulgação* — portais (LinkedIn, Indeed), visibilidade\n"
-                        f"• *Formulário* — perguntas de inscrição, pretensão salarial\n"
-                        f"• *Triagem IA* — critérios de avaliação automática\n\n"
-                        f"Diz *divulgação*, *formulário* ou *triagem* que eu te explico o passo a passo!",
-                    )
-                    conv.state = FlowState.MONITORING_CANDIDATES
+                    from routers.handlers.job_creation import _post_creation_chain
+                    await _post_creation_chain(conv, app, channel_id, job_id)
                 except Exception as e:
                     logger.exception("Erro ao criar vaga: %s", e)
                     await _send(conv, slack, channel_id, f"❌ Erro ao criar vaga: {e}")
@@ -1475,6 +1452,11 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
         elif callback_id == "shortlist_approval":
             if action_id == "approve":
                 await _move_approved_candidates(conv, app, channel_id)
+                # Proactively propose interviews for moved candidates
+                moved = conv.get_context("shortlist_candidates", [])
+                if moved:
+                    from routers.handlers.interviews import _propose_interview_times
+                    await _propose_interview_times(conv, app, channel_id, moved)
             elif action_id == "adjust":
                 conv.state = FlowState.MONITORING_CANDIDATES
                 await _send(

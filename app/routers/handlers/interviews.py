@@ -533,6 +533,24 @@ Se não conseguir identificar, retorne {"error": "o que falta"}"""
         except Exception as reminder_err:
             logger.warning("Não agendou lembrete: %s", reminder_err)
 
+        # Learn preferred slot if not already known
+        try:
+            user = app.state.user_mapping.get_user(conv.user_id) or {}
+            if not user.get("preferred_interview_slots"):
+                from datetime import datetime as dt_cls
+                start = appointment_payload.get("startDateTime", "")
+                if start:
+                    clean = start.replace("Z", "").replace(".000", "").split("+")[0]
+                    dt = dt_cls.fromisoformat(clean)
+                    day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                    learned_slot = {"day": day_names[dt.weekday()], "hour": dt.hour}
+                    app.state.user_mapping.update_settings(
+                        conv.user_id,
+                        preferred_interview_slots=[learned_slot],
+                    )
+        except Exception:
+            pass
+
         # Send interview kit to recruiter
         try:
             await _send_interview_kit(conv, app, channel_id, candidate.get("id", ""), candidate_name)
@@ -882,3 +900,118 @@ async def _send_test(conv, app, channel_id: str, tool_input: dict):
     except Exception as e:
         logger.error("Erro ao enviar teste: %s", e)
         await _send(conv, slack, channel_id, f"Não consegui enviar o teste. Erro: {e}")
+
+
+async def _propose_interview_times(conv, app, channel_id: str, candidates: list[dict]):
+    """Proactively propose interview times for shortlisted candidates."""
+    slack = app.state.slack
+    user_mapping = app.state.user_mapping
+
+    user = user_mapping.get_user(conv.user_id) or {}
+    preferred_slots = user.get("preferred_interview_slots", [])
+    job_name = conv.get_context("current_job_name", "")
+
+    if not candidates:
+        return
+
+    from datetime import datetime, timedelta, timezone as tz
+    now = datetime.now(tz(timedelta(hours=-3)))  # BRT
+
+    if preferred_slots:
+        proposals = []
+        day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4}
+        for slot in preferred_slots[:5]:
+            day_name = slot.get("day", "")
+            hour = slot.get("hour", 14)
+            day_num = day_map.get(day_name.lower()[:3], -1)
+            if day_num < 0:
+                continue
+            days_ahead = day_num - now.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            target = now + timedelta(days=days_ahead)
+            target = target.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if target > now + timedelta(hours=2):
+                proposals.append(target)
+
+        if proposals:
+            proposals.sort()
+            msg = f"🎯 *Entrevistas — {job_name}*\n\n"
+            msg += f"{len(candidates)} candidato(s) prontos. "
+            msg += "Com base nos seus horários preferidos, sugiro:\n\n"
+
+            for i, (cand, prop) in enumerate(zip(candidates[:len(proposals)], proposals)):
+                talent = cand.get("talent", {}) or {}
+                name = talent.get("name", "?")
+                day_br = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][prop.weekday()]
+                msg += f"  {i+1}. *{name}* — {day_br} {prop.strftime('%d/%m')} às {prop.strftime('%Hh')}\n"
+
+            remaining = len(candidates) - len(proposals)
+            if remaining > 0:
+                msg += f"\n  (+{remaining} candidato(s) sem horário sugerido)\n"
+
+            msg += "\nQuer que eu agende assim, ou prefere outros horários?"
+            await _send(conv, slack, channel_id, msg)
+            return
+
+    # No preferred slots — ask the recruiter
+    names = [((c.get("talent") or {}).get("name", "?")) for c in candidates[:5]]
+    names_text = ", ".join(names[:3])
+    if len(names) > 3:
+        names_text += f" e mais {len(names) - 3}"
+
+    msg = (
+        f"🎯 *{names_text}* estão prontos pra entrevista na vaga *{job_name}*!\n\n"
+        f"Quais são seus melhores horários essa semana?\n"
+        f"(Ex: \"terça e quinta às 14h\", \"amanhã 10h\")\n\n"
+        f"💡 Se me disser seus horários preferidos, da próxima vez eu já sugiro direto."
+    )
+    await _send(conv, slack, channel_id, msg)
+
+
+async def _send_micro_feedback(conv, app, channel_id: str, candidate_name: str,
+                                job_talent_id: str, job_name: str):
+    """Send micro-feedback buttons after interview. Called by ProactiveMonitor T+2h."""
+    slack = app.state.slack
+
+    msg = (
+        f"Como foi a entrevista com *{candidate_name}*? 🎯\n\n"
+        f"Reação rápida:"
+    )
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": msg}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Avançar"},
+                    "style": "primary",
+                    "value": f"micro_feedback_advance:{job_talent_id}",
+                    "action_id": "approve",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Preciso pensar"},
+                    "value": f"micro_feedback_maybe:{job_talent_id}",
+                    "action_id": "adjust",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Não avançar"},
+                    "style": "danger",
+                    "value": f"micro_feedback_reject:{job_talent_id}",
+                    "action_id": "reject",
+                },
+            ],
+        },
+    ]
+
+    conv.add_message("assistant", msg)
+    conv.set_context("micro_feedback_candidate", {
+        "job_talent_id": job_talent_id,
+        "candidate_name": candidate_name,
+        "job_name": job_name,
+    })
+    await slack.send_message(channel_id, msg, blocks=blocks)
