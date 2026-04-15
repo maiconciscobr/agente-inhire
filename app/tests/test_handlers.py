@@ -324,6 +324,8 @@ class TestPostCreationChain:
             "title": "Dev Python",
             "requirements": ["Python", "FastAPI"],
             "salary_range": {"min": 10000, "max": 15000},
+            "urgency": "alta",
+            "seniority": "Sênior",
         }
         mock_conv._context["current_job_name"] = "Dev Python"
         mock_app.state.user_mapping.get_user.return_value = {
@@ -331,13 +333,19 @@ class TestPostCreationChain:
         }
         mock_app.state.inhire.gen_filter_job_talents.return_value = None
         mock_app.state.inhire.list_job_talents.return_value = []
+        mock_app.state.learning = MagicMock()
+        mock_app.state.learning.total_decisions_count.return_value = 20
 
         await _post_creation_chain(mock_conv, mock_app, "C123", "job-1")
 
         # Should call auto_configure (screening)
         mock_app.state.inhire.configure_screening.assert_called_once()
-        # Should send consolidated message
+        # Should send consolidated message with mode suggestion
         assert mock_app.state.slack.send_message.call_count >= 1
+        # Check that the message contains mode suggestion
+        last_call = mock_app.state.slack.send_message.call_args_list[-1]
+        msg = last_call[0][1]
+        assert "Recomendo" in msg or "Piloto" in msg or "Copiloto" in msg
 
 
 class TestIsMuted:
@@ -570,3 +578,56 @@ class TestWebhookAutoScreening:
         await asyncio.sleep(0.1)
         # Should NOT auto-screen organic candidates
         mock_app.state.inhire.manual_screening.assert_not_called()
+
+
+class TestSuggestAutonomyMode:
+    def test_urgent_tech_suggests_autopilot(self):
+        from routers.handlers.job_creation import _suggest_autonomy_mode
+        job_data = {
+            "title": "Desenvolvedor Python Senior",
+            "urgency": "alta",
+            "seniority": "Sênior",
+            "salary_range": {"min": 15000, "max": 20000},
+            "requirements": ["Python", "FastAPI", "Docker"],
+        }
+        mode, reason = _suggest_autonomy_mode(job_data, decisions_count=20)
+        assert mode == "autopilot"
+        assert "urgência alta" in reason
+
+    def test_director_suggests_copilot(self):
+        from routers.handlers.job_creation import _suggest_autonomy_mode
+        job_data = {
+            "title": "Diretor de Engenharia",
+            "urgency": "média",
+            "seniority": "Diretor",
+            "salary_range": {"min": 35000, "max": 50000},
+            "requirements": ["Liderança", "Visão estratégica"],
+        }
+        mode, reason = _suggest_autonomy_mode(job_data, decisions_count=30)
+        assert mode == "copilot"
+        assert "liderança" in reason or "salário alto" in reason
+
+    def test_new_recruiter_suggests_copilot(self):
+        from routers.handlers.job_creation import _suggest_autonomy_mode
+        job_data = {
+            "title": "Dev Backend",
+            "urgency": "alta",
+            "seniority": "Pleno",
+            "salary_range": {"min": 8000, "max": 12000},
+            "requirements": ["Java", "Spring"],
+        }
+        mode, reason = _suggest_autonomy_mode(job_data, decisions_count=3)
+        assert mode == "copilot"
+        assert "poucos dados" in reason
+
+    def test_standard_job_experienced_recruiter_suggests_autopilot(self):
+        from routers.handlers.job_creation import _suggest_autonomy_mode
+        job_data = {
+            "title": "Analista de QA",
+            "urgency": "alta",
+            "seniority": "Pleno",
+            "salary_range": {"min": 6000, "max": 10000},
+            "requirements": ["Selenium", "Python", "CI/CD"],
+        }
+        mode, reason = _suggest_autonomy_mode(job_data, decisions_count=25)
+        assert mode == "autopilot"

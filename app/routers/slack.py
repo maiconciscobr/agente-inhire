@@ -990,15 +990,31 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
             mode = mode.lower().strip()
             if mode not in ("copilot", "autopilot"):
                 mode = "autopilot" if "auto" in mode or "piloto" in mode else "copilot"
+
+            # Per-job mode: save for the current active job
+            job_id = conv.get_context("current_job_id")
+            job_name = conv.get_context("current_job_name", "")
+            if job_id:
+                try:
+                    from routers.handlers.job_creation import _set_job_mode
+                    import redis as redis_lib
+                    from config import get_settings
+                    r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+                    _set_job_mode(r, conv.user_id, job_id, mode)
+                except Exception:
+                    pass
+
+            # Also update global default
             user_mapping.update_settings(conv.user_id, autonomy_mode=mode)
+
             mode_label = "Piloto Automático ✈️" if mode == "autopilot" else "Copiloto 🧑‍✈️"
-            msg = f"Modo alterado para *{mode_label}*!\n\n"
+            scope = f" para a vaga *{job_name}*" if job_name else " (padrão para novas vagas)"
+            msg = f"Modo alterado para *{mode_label}*{scope}!\n\n"
             if mode == "autopilot":
                 t = user_mapping.get_setting(conv.user_id, "auto_advance_threshold") or 4.0
                 decisions = learning.total_decisions_count(conv.user_id)
                 msg += (
-                    f"Vou agir sozinho no máximo possível:\n"
-                    f"• Configuro vagas automaticamente\n"
+                    f"Nessa vaga eu vou agir sozinho:\n"
                     f"• Divulgo em portais sem perguntar\n"
                     f"• Avanço candidatos com score ≥ {t}\n"
                     f"• Comunico candidatos direto (WhatsApp/email)\n"
@@ -1012,8 +1028,8 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
                     )
             else:
                 msg += (
-                    "Vou continuar fazendo tudo automaticamente (screening, config, busca),\n"
-                    "mas peço aprovação antes de divulgar vagas, mover candidatos e comunicar."
+                    "Nessa vaga, faço tudo automaticamente (screening, config, busca),\n"
+                    "mas peço aprovação antes de divulgar, mover candidatos e comunicar."
                 )
             await _send(conv, slack, channel_id, msg)
 

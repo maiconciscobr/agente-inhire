@@ -235,12 +235,87 @@ async def _auto_configure_job(conv, app, channel_id: str, job_id: str):
     return configured
 
 
+def _suggest_autonomy_mode(job_data: dict, decisions_count: int) -> tuple[str, str]:
+    """Analyze job characteristics and suggest copilot or autopilot.
+    Returns (suggested_mode, reason).
+    """
+    title = (job_data.get("title") or "").lower()
+    urgency = (job_data.get("urgency") or "").lower()
+    seniority = (job_data.get("seniority") or "").lower()
+    salary_max = 0
+    sr = job_data.get("salary_range")
+    if isinstance(sr, dict):
+        salary_max = sr.get("max") or sr.get("min") or 0
+    requirements = job_data.get("requirements", [])
+
+    # Signals for COPILOT (more control)
+    copilot_signals = []
+    leadership_keywords = ["diretor", "director", "head", "vp", "c-level", "cto", "cfo", "ceo", "gerente geral", "líder", "lider"]
+    if any(k in title for k in leadership_keywords):
+        copilot_signals.append("vaga de liderança")
+    if salary_max and salary_max >= 30000:
+        copilot_signals.append("salário alto")
+    if seniority in ("especialista", "diretor", "c-level"):
+        copilot_signals.append("senioridade alta")
+    if decisions_count < 15:
+        copilot_signals.append("ainda tenho poucos dados pra calibrar")
+
+    # Signals for AUTOPILOT (speed)
+    autopilot_signals = []
+    if urgency in ("alta", "high", "urgente"):
+        autopilot_signals.append("urgência alta")
+    if len(requirements) >= 3:
+        autopilot_signals.append("requisitos bem definidos")
+    if seniority in ("júnior", "junior", "pleno", "pleno-senior", "sênior", "senior"):
+        autopilot_signals.append("perfil técnico")
+    if salary_max and salary_max < 30000:
+        autopilot_signals.append("faixa salarial padrão")
+    if decisions_count >= 15:
+        autopilot_signals.append("tenho dados suficientes pra calibrar")
+
+    # Few decisions is a strong signal — override everything
+    if decisions_count < 15:
+        reason = "ainda tenho poucos dados pra calibrar"
+        if autopilot_signals:
+            reason += f" (mas a vaga tem {', '.join(autopilot_signals[:2])})"
+        return "copilot", reason
+
+    if len(copilot_signals) > len(autopilot_signals):
+        reason = ", ".join(copilot_signals[:3])
+        return "copilot", reason
+    elif len(autopilot_signals) >= 2:
+        reason = ", ".join(autopilot_signals[:3])
+        return "autopilot", reason
+    else:
+        return "copilot", "posição nova, melhor acompanhar de perto"
+
+
+def _get_job_mode(redis_conn, recruiter_id: str, job_id: str) -> str | None:
+    """Get autonomy mode for a specific job. Returns None if not set (use default)."""
+    if not redis_conn:
+        return None
+    try:
+        return redis_conn.get(f"inhire:job_mode:{recruiter_id}:{job_id}")
+    except Exception:
+        return None
+
+
+def _set_job_mode(redis_conn, recruiter_id: str, job_id: str, mode: str):
+    """Set autonomy mode for a specific job."""
+    if not redis_conn:
+        return
+    try:
+        redis_conn.setex(f"inhire:job_mode:{recruiter_id}:{job_id}", 86400 * 180, mode)
+    except Exception:
+        pass
+
+
 async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     """Execute the full post-creation automation chain.
     Phase 1 (sequential): auto-configure (screening, scorecard, form)
     Phase 2 (parallel): smart match + linkedin search
-    Phase 3 (mode-dependent): auto-publish in autopilot
-    Phase 4: consolidated message
+    Phase 3: suggest autonomy mode for this job
+    Phase 4: consolidated message with mode suggestion
     """
     import asyncio
     slack = app.state.slack
@@ -248,12 +323,10 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
 
     job_data = conv.get_context("job_data", {})
     job_name = conv.get_context("current_job_name", "")
-    user = app.state.user_mapping.get_user(conv.user_id) or {}
-    mode = user.get("autonomy_mode", "copilot")
 
     results = {"configured": [], "match_count": 0, "high_fit": 0, "linkedin": ""}
 
-    # Set chain-active flag to prevent webhook auto-screening collisions
+    # Redis connection (for chain flag + job mode)
     r = None
     try:
         import redis as redis_lib
@@ -275,7 +348,6 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
             ai_result = await inhire.gen_filter_job_talents(job_id, query)
             if ai_result:
                 results["match_count"] = ai_result.get("total", 0) if isinstance(ai_result, dict) else 0
-            # Log to audit
             if hasattr(app.state, "audit_log"):
                 app.state.audit_log.log_action(
                     conv.user_id, "smart_match", job_id,
@@ -287,10 +359,12 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     async def _run_linkedin_search():
         try:
             requirements = job_data.get("requirements", [])
-            title = job_data.get("title", "")
-            location = job_data.get("location", "")
-            terms = [title] + requirements[:5]
-            required = " AND ".join(f'"{t}"' for t in terms[:3] if t)
+            title = job_data.get("title") or job_name or ""
+            location = job_data.get("location") or ""
+            terms = [t for t in [title] + requirements[:5] if t]
+            if not terms:
+                return
+            required = " AND ".join(f'"{t}"' for t in terms[:3])
             optional = " OR ".join(f'"{t}"' for t in terms[3:] if t)
             search = f"({required})"
             if optional:
@@ -307,24 +381,6 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
 
     await asyncio.gather(_run_smart_match(), _run_linkedin_search(), return_exceptions=True)
 
-    # Phase 3: Auto-publish (autopilot only)
-    auto_published = False
-    if mode == "autopilot":
-        try:
-            integrations = await inhire.get_integrations()
-            career_pages = [i for i in integrations if i.get("type") == "careerPage"]
-            if career_pages:
-                page_id = career_pages[0].get("id", "")
-                if page_id:
-                    await inhire.publish_job(job_id, page_id, job_name, ["linkedin", "indeed"])
-                    auto_published = True
-                    if hasattr(app.state, "audit_log"):
-                        app.state.audit_log.log_action(
-                            conv.user_id, "auto_publish", job_id, detail="LinkedIn + Indeed",
-                        )
-        except Exception as e:
-            logger.warning("Auto-publish falhou: %s", e)
-
     # Clear chain-active flag
     try:
         if r is not None:
@@ -332,7 +388,18 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     except Exception:
         pass
 
-    # Phase 4: Consolidated message (result-oriented)
+    # Phase 3: Suggest autonomy mode for this job
+    decisions_count = 0
+    try:
+        learning = getattr(app.state, "learning", None)
+        if learning:
+            decisions_count = learning.total_decisions_count(conv.user_id)
+    except Exception:
+        pass
+
+    suggested_mode, suggestion_reason = _suggest_autonomy_mode(job_data, decisions_count)
+
+    # Phase 4: Consolidated message (result-oriented + mode suggestion)
     msg = f"Vaga *{job_name}* criada! Já estou trabalhando nela 🚀\n\n"
 
     if results["match_count"] > 0:
@@ -344,10 +411,19 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     if results["linkedin"]:
         msg += f"Busca LinkedIn pronta:\n`{results['linkedin']}`\n\n"
 
-    if auto_published:
-        msg += "📢 Divulguei no LinkedIn e Indeed ✓\n\n"
-    elif mode == "copilot":
-        msg += "Quer que eu divulgue no LinkedIn e Indeed?\n\n"
+    # Mode suggestion
+    if suggested_mode == "autopilot":
+        msg += (
+            f"💡 Essa vaga tem *{suggestion_reason}*. "
+            f"Recomendo *Piloto Automático* — eu cuido de tudo e só paro pra reprovar e enviar oferta.\n"
+            f"Quer ativar? Diz \"piloto automático pra essa vaga\"\n\n"
+        )
+    else:
+        msg += (
+            f"💡 Essa vaga tem *{suggestion_reason}*. "
+            f"Recomendo *Copiloto* — faço o trabalho pesado mas você aprova os passos importantes.\n"
+            f"Se preferir mais autonomia, diz \"piloto automático pra essa vaga\"\n\n"
+        )
 
     msg += "Vou ficar de olho nos candidatos e te aviso quando tiver gente boa!"
 
