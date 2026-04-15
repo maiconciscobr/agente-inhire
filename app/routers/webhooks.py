@@ -1,11 +1,15 @@
 import logging
 import json
+import asyncio
 
 from fastapi import APIRouter, Request, Response
 
 logger = logging.getLogger("agente-inhire.webhooks")
 
 router = APIRouter(tags=["webhooks"])
+
+# Semaphore to prevent thundering herd on auto-screening
+_SCREENING_SEMAPHORE = asyncio.Semaphore(5)
 
 
 def _detect_event_type(body: dict) -> str:
@@ -56,32 +60,80 @@ async def inhire_webhook(request: Request):
 
 
 async def _handle_talent_added(app, payload: dict):
-    """Handle new candidate added — silent tracking only.
-    Proactive alerts (shortlist ready, SLA, etc.) are handled by the hourly cron monitor.
-    NOTE: Adding talents to jobs via API (POST /jobs/{id}/talents) is blocked by API Gateway (403).
-    Pending resolution with InHire dev team."""
-    try:
-        job_name = payload.get("jobName", "Vaga")
-        talent_id = payload.get("talentId", "")
-        linkedin = payload.get("linkedinUsername", "")
+    """Handle JOB_TALENT_ADDED webhook — auto-screen hunting candidates.
+    For organic candidates (via form), InHire auto-screens; for hunting candidates
+    (manual/API), we trigger screening on arrival to avoid blind spots."""
+    job_id = payload.get("jobId", "")
+    talent_id = payload.get("talentId", "")
+    source = payload.get("source", "")
+    job_talent_id = f"{job_id}*{talent_id}" if job_id and talent_id else ""
 
-        talent_name = linkedin or "Novo candidato"
+    logger.info("Talent added: %s (source=%s, job=%s)", talent_id, source, job_id)
+
+    # Auto-screen hunting candidates (no form → no automatic screening in InHire)
+    if source in ("manual", "api") and job_talent_id:
+        # Check if post-creation chain is running (avoid duplicate screening)
         try:
-            inhire = app.state.inhire
-            talent_data = await inhire._request("GET", f"/talents/{talent_id}")
-            talent_name = talent_data.get("name") or talent_name
+            import redis as redis_lib
+            from config import get_settings
+            r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+            if r.get(f"inhire:chain_active:{job_id}"):
+                r.rpush(f"inhire:screening_pending:{job_id}", job_talent_id)
+                r.expire(f"inhire:screening_pending:{job_id}", 600)
+                logger.info("Queued screening for %s (chain active)", job_talent_id)
+                return
         except Exception:
             pass
 
-        logger.info("Novo candidato na vaga %s: %s (silencioso — cron monitora)", job_name, talent_name)
+        # Dispatch with semaphore to prevent thundering herd
+        async def _screen():
+            async with _SCREENING_SEMAPHORE:
+                try:
+                    inhire = app.state.inhire
+                    result = await inhire.manual_screening(job_talent_id)
+                    if not result:
+                        await inhire.analyze_resume(job_talent_id)
+                    if hasattr(app.state, "audit_log"):
+                        app.state.audit_log.log_action(
+                            "", "auto_screening", job_id,
+                            candidate=talent_id, detail=f"source={source}",
+                        )
+                    logger.info("Auto-screening dispatched for %s", job_talent_id)
+                except Exception as e:
+                    logger.warning("Auto-screening failed for %s: %s", job_talent_id, e)
 
-    except Exception as e:
-        logger.exception("Erro ao processar talent added: %s", e)
+        asyncio.create_task(_screen())
+    else:
+        # Organic candidate or unknown source — just log
+        try:
+            job_name = payload.get("jobName", "Vaga")
+            linkedin = payload.get("linkedinUsername", "")
+            talent_name = linkedin or "Novo candidato"
+            try:
+                inhire = app.state.inhire
+                talent_data = await inhire._request("GET", f"/talents/{talent_id}")
+                talent_name = talent_data.get("name") or talent_name
+            except Exception:
+                pass
+            logger.info("Novo candidato na vaga %s: %s (source=%s)", job_name, talent_name, source)
+        except Exception as e:
+            logger.warning("Erro ao logar talent added: %s", e)
 
 
 async def _handle_stage_added(app, payload: dict):
     """Handle candidate moved to new stage. Includes hiring celebration."""
     try:
+        # Flag for cron to skip follow-up on recently moved candidates
+        try:
+            import redis as redis_lib
+            from config import get_settings
+            r = redis_lib.from_url(get_settings().redis_url, decode_responses=True)
+            jt_id = f"{payload.get('jobId', '')}*{payload.get('talentId', '')}"
+            if jt_id and "*" in jt_id and not jt_id.startswith("*"):
+                r.set(f"inhire:stage_changed:{jt_id}", "1", ex=7200)
+        except Exception:
+            pass
+
         talent_name = payload.get("userName") or payload.get("talentName", "Candidato")
         stage = payload.get("stageName", "Nova etapa")
         job_name = payload.get("jobName", "Vaga")
