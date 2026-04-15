@@ -76,9 +76,6 @@ Eli Autonomia v2 — transformar de assistente reativo (13 aprovações) em agen
 | Batch approval no copiloto | Spec pronto | Agrupar 3+ ações em 1 clique — `_request_or_auto_approve` está pronto, falta integrar nos handlers |
 | Integração `_request_or_auto_approve` nos handlers | Spec pronto | Substituir `_send_approval` direto por wrapper nos handlers de candidates.py e slack.py |
 | Testes E2E das novas features | Não testado | Requer créditos Anthropic + servidor rodando |
-| LGPD: pseudonimização no Claude | Não implementado | Precisa wrapper que substitui nomes por IDs antes de enviar |
-| LGPD: rodapé IA nas comunicações | Não implementado | Precisa alterar send_whatsapp e send_email handlers |
-| LGPD: RIPD e DPA com Anthropic | Documento externo | Não é código — precisa do jurídico |
 | Deploy no servidor | Não feito | SCP + restart systemd |
 
 ### Arquivos modificados nesta sessão (branch feature/autonomy-v2)
