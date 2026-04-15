@@ -1,7 +1,7 @@
 # Eli Autonomia v2 — Design Spec
 
 **Data:** 2026-04-15
-**Objetivo:** Transformar o Eli de assistente reativo em agente autônomo que acelera o time-to-fill, reduzindo de 13 para 3-5 pontos de aprovação conforme o modo escolhido.
+**Objetivo:** Transformar o Eli de assistente reativo em agente autônomo que acelera o time-to-fill, reduzindo de 13 para 2-5 pontos de aprovação conforme o modo escolhido.
 
 ---
 
@@ -36,17 +36,17 @@ Eli faz tudo que pode automaticamente. Avisa o que fez. Só pede aprovação qua
 
 Tudo do Copiloto, mais: divulga vagas automaticamente e move candidatos com score acima do threshold sem pedir.
 
-**3 pontos de aprovação:**
+**2 pontos de aprovação:**
 
 | # | Ação | Por que pede |
 |---|---|---|
 | 1 | Reprovar candidatos | Irreversível + marca empregadora |
-| 2 | Enviar comunicação ao candidato | LGPD + tom de voz |
-| 3 | Emitir carta oferta | Compromisso financeiro/jurídico |
+| 2 | Emitir carta oferta | Compromisso financeiro/jurídico |
 
 **Faz sozinho adicionalmente:**
 - Divulga vaga após criação (portais configurados)
 - Move candidatos para próxima etapa se score ≥ threshold do recrutador
+- Envia comunicação externa (WhatsApp/email) automaticamente com templates
 - Agenda entrevistas proativamente após shortlist aprovado (sugere horários)
 
 ### Troca de Modo
