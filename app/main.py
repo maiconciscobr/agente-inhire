@@ -16,6 +16,7 @@ from services.learning import LearningService
 from services.proactive_monitor import ProactiveMonitor
 from services.talent_search import TalentSearchService
 from services.routines import RoutineService
+from services.audit_log import AuditLog
 
 logger = logging.getLogger("agente-inhire")
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     app.state.conversations = ConversationManager()
     app.state.user_mapping = UserMapping()
     app.state.learning = LearningService()
+    app.state.audit_log = AuditLog()
     app.state.talent_search = TalentSearchService(app.state.inhire)
     app.state.monitor = ProactiveMonitor(
         inhire=app.state.inhire,

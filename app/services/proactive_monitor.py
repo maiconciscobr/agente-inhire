@@ -440,6 +440,16 @@ class ProactiveMonitor:
         if urgent_jobs:
             text += f"\n\nQuer que eu monte o shortlist da vaga de *{urgent_jobs[0].get('name')}*?"
 
+        # Add audit log section (what Eli did automatically yesterday)
+        try:
+            from services.audit_log import AuditLog
+            audit = AuditLog()
+            audit_text = audit.format_for_briefing(slack_user_id)
+            if audit_text:
+                text += f"\n\n🤖 *O que eu fiz ontem:*\n{audit_text}\n"
+        except Exception:
+            pass
+
         await self._send_proactive(slack_user_id, channel_id, text,
                                    alert_type="daily_briefing")
         self._mark_briefing_sent(slack_user_id)
@@ -702,6 +712,106 @@ class ProactiveMonitor:
                             self._mark_alerted(job_id, alert_id)
         except Exception:
             pass  # Talent list may fail for some jobs
+
+        # Stage-specific follow-ups
+        await self._check_stage_followups(job, user, channel_id)
+
+    async def _check_stage_followups(self, job: dict, user: dict, channel_id: str):
+        """Stage-specific follow-ups: interview feedback, offer decision, exceptional urgency."""
+        job_id = job.get("id", "")
+        job_name = job.get("name", "")
+        user_id = user.get("slack_user_id", "")
+        intensity = user.get("followup_intensity", "normal")
+        multiplier = {"gentle": 2.0, "normal": 1.0, "aggressive": 0.5}.get(intensity, 1.0)
+
+        try:
+            candidates = await self.inhire.list_job_talents(job_id)
+        except Exception:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        for c in candidates:
+            if c.get("status") in ("rejected", "dropped"):
+                continue
+
+            stage = c.get("stage", {}) or {}
+            stage_name = stage.get("name", "")
+            stage_type = stage.get("type", "")
+            talent = c.get("talent", {}) or {}
+            name = talent.get("name", "?")
+            jt_id = c.get("id", "")
+            screening = c.get("screening", {}) or {}
+            score = screening.get("score")
+
+            updated = c.get("updatedAt") or c.get("createdAt", "")
+            if not updated:
+                continue
+            try:
+                updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                hours_in_stage = (now - updated_dt).total_seconds() / 3600
+            except Exception:
+                continue
+
+            # Check if candidate was recently moved (webhook set this flag)
+            try:
+                if self._redis and self._redis.exists(f"inhire:stage_changed:{jt_id}"):
+                    continue
+            except Exception:
+                pass
+
+            # --- Interview stages: follow-up for feedback ---
+            if stage_type in ("culturalFit", "technicalFit"):
+                followup_hours = 24 * multiplier
+                if hours_in_stage >= followup_hours:
+                    alert_key = f"followup_interview:{jt_id}"
+                    if not self._was_recently_sent(user_id, alert_key, ttl_hours=48 * multiplier):
+                        days = int(hours_in_stage / 24)
+                        msg = (
+                            f"📝 *{name}* está em *{stage_name}* há "
+                            f"{days} dia(s) na vaga *{job_name}*.\n"
+                            f"Se já entrevistou, me conta como foi que eu preencho o scorecard!"
+                        )
+                        await self._send_proactive(user_id, channel_id, msg, alert_type="interview_followup")
+
+            # --- Offer stage: follow-up for decision ---
+            elif stage_type == "offer":
+                followup_hours = 72 * multiplier
+                if hours_in_stage >= followup_hours:
+                    alert_key = f"followup_offer:{jt_id}"
+                    if not self._was_recently_sent(user_id, alert_key, ttl_hours=72 * multiplier):
+                        days = int(hours_in_stage / 24)
+                        msg = (
+                            f"📋 A proposta de *{name}* está aberta há *{days} dias* "
+                            f"na vaga *{job_name}*.\nQuer que eu entre em contato com o candidato?"
+                        )
+                        await self._send_proactive(user_id, channel_id, msg, alert_type="offer_followup")
+
+            # --- Exceptional candidate urgency ---
+            if score and isinstance(score, (int, float)) and score >= 4.5:
+                urgency_hours = 8 * multiplier  # T+8h (not T+4h per specialist review)
+                if hours_in_stage >= urgency_hours:
+                    alert_key = f"exceptional_urgent:{jt_id}"
+                    if not self._was_recently_sent(user_id, alert_key, ttl_hours=24):
+                        msg = (
+                            f"🚨 *{name}* (score {score:.1f}) está na vaga *{job_name}* "
+                            f"há {int(hours_in_stage)}h sem avançar.\n"
+                            f"Perfis assim costumam receber outras propostas rápido."
+                        )
+                        await self._send_proactive(user_id, channel_id, msg, alert_type="exceptional_urgent")
+
+    def _was_recently_sent(self, user_id: str, alert_key: str, ttl_hours: float = 24) -> bool:
+        """Check if this specific follow-up was sent recently. Returns True if already sent (skip)."""
+        try:
+            if not self._redis:
+                return False
+            key = f"inhire:followup_sent:{user_id}:{alert_key}"
+            if self._redis.get(key):
+                return True
+            self._redis.set(key, "1", ex=int(ttl_hours * 3600))
+            return False
+        except Exception:
+            return False
 
     # ==============================================================================
     # WEEKLY CONSOLIDATED REPORT
