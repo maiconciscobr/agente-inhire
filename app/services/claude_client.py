@@ -506,6 +506,31 @@ ELI_TOOLS = [
         },
     },
     {
+        "name": "modo_autonomia",
+        "description": (
+            "Troca entre modo copiloto e piloto automático, ou ajusta threshold/silenciar. "
+            "Use quando o recrutador pedir mais/menos autonomia, modo piloto, "
+            "modo copiloto, silenciar notificações, ou ajustar score de auto-advance."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "'copilot' ou 'autopilot'",
+                },
+                "threshold": {
+                    "type": "number",
+                    "description": "Score mínimo para auto-advance (0-5). Só no autopilot.",
+                },
+                "mute_hours": {
+                    "type": "number",
+                    "description": "Silenciar notificações por N horas",
+                },
+            },
+        },
+    },
+    {
         "name": "conversa_livre",
         "description": (
             "Fallback para perguntas gerais sobre recrutamento ou qualquer assunto."

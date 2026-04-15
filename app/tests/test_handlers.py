@@ -189,8 +189,7 @@ class TestToolDefinitions:
     def test_tool_count(self):
         from services.claude_client import ELI_TOOLS
 
-        # 22 original + 4 new = 26
-        assert len(ELI_TOOLS) == 26, f"Expected 26 tools, got {len(ELI_TOOLS)}"
+        assert len(ELI_TOOLS) == 27, f"Expected 27 tools, got {len(ELI_TOOLS)}"
 
     def test_new_tools_exist(self):
         from services.claude_client import ELI_TOOLS
@@ -272,3 +271,18 @@ class TestShouldAutoApprove:
         user = {"autonomy_mode": "autopilot", "auto_advance_threshold": 4.0}
         assert _should_auto_approve(user, "send_whatsapp") is True
         assert _should_auto_approve(user, "send_email") is True
+
+
+class TestModoAutonomiaTool:
+    def test_tool_exists(self):
+        from services.claude_client import ELI_TOOLS
+        tool_names = {t["name"] for t in ELI_TOOLS}
+        assert "modo_autonomia" in tool_names
+
+    def test_tool_schema(self):
+        from services.claude_client import ELI_TOOLS
+        tool = next(t for t in ELI_TOOLS if t["name"] == "modo_autonomia")
+        props = tool["input_schema"]["properties"]
+        assert "mode" in props
+        assert "threshold" in props
+        assert "mute_hours" in props

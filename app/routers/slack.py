@@ -968,6 +968,67 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
     elif tool == "pesquisa_candidato":
         await _handle_nps_survey(conv, app, channel_id, tool_input)
 
+    elif tool == "modo_autonomia":
+        user_mapping = app.state.user_mapping
+        learning = app.state.learning
+
+        mode = tool_input.get("mode")
+        threshold = tool_input.get("threshold")
+        mute_hours = tool_input.get("mute_hours")
+
+        if mode:
+            mode = mode.lower().strip()
+            if mode not in ("copilot", "autopilot"):
+                mode = "autopilot" if "auto" in mode or "piloto" in mode else "copilot"
+            user_mapping.update_settings(conv.user_id, autonomy_mode=mode)
+            mode_label = "Piloto Automático ✈️" if mode == "autopilot" else "Copiloto 🧑‍✈️"
+            msg = f"Modo alterado para *{mode_label}*!\n\n"
+            if mode == "autopilot":
+                t = user_mapping.get_setting(conv.user_id, "auto_advance_threshold") or 4.0
+                decisions = learning.total_decisions_count(conv.user_id)
+                msg += (
+                    f"Vou agir sozinho no máximo possível:\n"
+                    f"• Configuro vagas automaticamente\n"
+                    f"• Divulgo em portais sem perguntar\n"
+                    f"• Avanço candidatos com score ≥ {t}\n"
+                    f"• Comunico candidatos direto (WhatsApp/email)\n"
+                    f"• Só paro pra reprovar candidatos ou enviar oferta\n\n"
+                    f"Threshold atual: *{t}*. Diz se quiser ajustar."
+                )
+                if decisions < 15:
+                    msg += (
+                        f"\n\n⚠️ Ainda tenho poucos dados pra calibrar ({decisions} decisões). "
+                        f"Pode ter mais erros que o normal no começo."
+                    )
+            else:
+                msg += (
+                    "Vou continuar fazendo tudo automaticamente (screening, config, busca),\n"
+                    "mas peço aprovação antes de divulgar vagas, mover candidatos e comunicar."
+                )
+            await _send(conv, slack, channel_id, msg)
+
+        if threshold is not None:
+            threshold = max(0.0, min(5.0, float(threshold)))
+            user_mapping.update_settings(conv.user_id, auto_advance_threshold=threshold)
+            learning.set_threshold(conv.user_id, threshold)
+            if not mode:
+                await _send(
+                    conv, slack, channel_id,
+                    f"Threshold de auto-advance ajustado para *{threshold}*.\n"
+                    f"Candidatos com score ≥ {threshold} serão avançados automaticamente no modo Piloto.",
+                )
+
+        if mute_hours is not None:
+            from datetime import datetime, timedelta, timezone
+            mute_until = (datetime.now(timezone.utc) + timedelta(hours=float(mute_hours))).isoformat()
+            user_mapping.update_settings(conv.user_id, muted_until=mute_until)
+            if not mode and threshold is None:
+                await _send(
+                    conv, slack, channel_id,
+                    f"🔇 Notificações silenciadas por {int(mute_hours)}h. "
+                    f"Tudo vai pro briefing. Pra reativar: \"Eli, volta as notificações\"",
+                )
+
     elif tool == "conversa_livre":
         # Use text from detect_intent if available, avoid double-call
         direct_text = result.get("text", "")
