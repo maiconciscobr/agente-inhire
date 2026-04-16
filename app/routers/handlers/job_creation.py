@@ -1,7 +1,7 @@
 import logging
 
 from services.conversation import FlowState
-from routers.handlers.helpers import _send, _send_approval, _request_or_auto_approve
+from routers.handlers.helpers import _send, _send_approval, _request_or_auto_approve, _should_auto_approve
 
 logger = logging.getLogger("agente-inhire.slack-router")
 
@@ -314,8 +314,9 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     """Execute the full post-creation automation chain.
     Phase 1 (sequential): auto-configure (screening, scorecard, form)
     Phase 2 (parallel): smart match + linkedin search
-    Phase 3: suggest autonomy mode for this job
-    Phase 4: consolidated message with mode suggestion
+    Phase 3: publish job (batch or auto depending on mode)
+    Phase 4: suggest autonomy mode + consolidated message
+    Phase 5: if copilot with pending actions, send batch or individual approval
     """
     import asyncio
     slack = app.state.slack
@@ -325,6 +326,7 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     job_name = conv.get_context("current_job_name", "")
 
     results = {"configured": [], "match_count": 0, "high_fit": 0, "linkedin": ""}
+    batch_actions = []  # Accumulate copilot-pending actions
 
     # Redis connection (for chain flag + job mode)
     r = None
@@ -335,6 +337,11 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
         r.set(f"inhire:chain_active:{job_id}", "1", ex=300)
     except Exception:
         pass
+
+    # Check autonomy mode for publish decision
+    user = app.state.user_mapping.get_user(conv.user_id) or {}
+    learning = getattr(app.state, "learning", None)
+    is_auto_publish = _should_auto_approve(user, "publish_job", learning=learning, recruiter_id=conv.user_id)
 
     # Phase 1: Auto-configure (SEQUENTIAL — must complete before match/screening)
     configured = await _auto_configure_job(conv, app, channel_id, job_id)
@@ -381,6 +388,49 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
 
     await asyncio.gather(_run_smart_match(), _run_linkedin_search(), return_exceptions=True)
 
+    # Phase 3: Publish job
+    try:
+        integrations = await inhire.get_integrations()
+        available_boards = []
+        career_page_id = ""
+        for integ in integrations:
+            jb = integ.get("jobBoardSettings", {}) or {}
+            if jb.get("linkedinId"):
+                available_boards.append("linkedin")
+            if jb.get("indeedEmail") or jb.get("indeed"):
+                available_boards.append("indeed")
+            if jb.get("tramposCompanyId"):
+                available_boards.append("netVagas")
+            if integ.get("url"):
+                career_page_id = integ.get("id", "")
+
+        if available_boards and career_page_id:
+            conv.set_context("publish_job_id", job_id)
+            conv.set_context("publish_boards", available_boards)
+            conv.set_context("publish_career_page_id", career_page_id)
+            channels_str = ", ".join(b.capitalize() for b in available_boards)
+
+            if is_auto_publish:
+                try:
+                    result = await inhire.publish_job(
+                        job_id=job_id,
+                        career_page_id=career_page_id,
+                        display_name=job_name,
+                        active_job_boards=available_boards,
+                    )
+                    results["published"] = True
+                    if hasattr(app.state, "audit_log"):
+                        app.state.audit_log.log_action(conv.user_id, "publish_job", job_id)
+                except Exception as pub_err:
+                    logger.warning("Auto-publish falhou: %s", pub_err)
+            else:
+                batch_actions.append({
+                    "callback_id": "publish_job_approval",
+                    "title": f"Divulgar vaga em {channels_str}",
+                })
+    except Exception as e:
+        logger.warning("Erro ao verificar canais de divulgação: %s", e)
+
     # Clear chain-active flag
     try:
         if r is not None:
@@ -388,10 +438,9 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     except Exception:
         pass
 
-    # Phase 3: Suggest autonomy mode for this job
+    # Phase 4: Suggest autonomy mode for this job
     decisions_count = 0
     try:
-        learning = getattr(app.state, "learning", None)
         if learning:
             decisions_count = learning.total_decisions_count(conv.user_id)
     except Exception:
@@ -399,7 +448,7 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
 
     suggested_mode, suggestion_reason = _suggest_autonomy_mode(job_data, decisions_count)
 
-    # Phase 4: Consolidated message (result-oriented + mode suggestion)
+    # Consolidated message (result-oriented)
     msg = f"Vaga *{job_name}* criada! Já estou trabalhando nela 🚀\n\n"
 
     if results["match_count"] > 0:
@@ -410,6 +459,12 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
 
     if results["linkedin"]:
         msg += f"Busca LinkedIn pronta:\n`{results['linkedin']}`\n\n"
+
+    if results.get("published"):
+        channels_str = ", ".join(
+            b.capitalize() for b in conv.get_context("publish_boards", [])
+        )
+        msg += f"Divulguei no {channels_str} ✓\n\n"
 
     # Mode suggestion
     if suggested_mode == "autopilot":
@@ -428,5 +483,18 @@ async def _post_creation_chain(conv, app, channel_id: str, job_id: str):
     msg += "Vou ficar de olho nos candidatos e te aviso quando tiver gente boa!"
 
     await _send(conv, slack, channel_id, msg)
+
+    # Phase 5: Send batch or individual approval for copilot-pending actions
+    if len(batch_actions) >= 3:
+        from routers.handlers.helpers import _send_batch_approval
+        await _send_batch_approval(conv, slack, channel_id, batch_actions)
+    elif batch_actions:
+        for item in batch_actions:
+            await _send_approval(
+                conv, slack, channel_id,
+                title=item["title"],
+                details=f"Aprovar: {item['title']}?",
+                callback_id=item["callback_id"],
+            )
 
     conv.state = FlowState.MONITORING_CANDIDATES

@@ -333,6 +333,7 @@ class TestPostCreationChain:
         }
         mock_app.state.inhire.gen_filter_job_talents.return_value = None
         mock_app.state.inhire.list_job_talents.return_value = []
+        mock_app.state.inhire.get_integrations.return_value = []
         mock_app.state.learning = MagicMock()
         mock_app.state.learning.total_decisions_count.return_value = 20
 
@@ -724,3 +725,70 @@ class TestBatchApprovalHandler:
         # Should have sent individual approval messages
         assert mock_app.state.slack.send_approval_request.call_count >= 1 or \
                mock_app.state.slack.send_message.call_count >= 1
+
+
+class TestPostCreationChainBatch:
+    @pytest.mark.asyncio
+    async def test_copilot_accumulates_publish_in_batch(self, mock_conv, mock_app):
+        """In copilot mode with integrations, publish should go to batch."""
+        from routers.handlers.job_creation import _post_creation_chain
+
+        mock_conv._context["job_data"] = {
+            "title": "Dev Python",
+            "requirements": ["Python", "FastAPI"],
+        }
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_conv.user_id = "U123"
+
+        # Copilot mode
+        mock_app.state.user_mapping.get_user.return_value = {
+            "autonomy_mode": "copilot",
+            "auto_advance_threshold": 4.0,
+        }
+        # Mock integrations to trigger publish
+        mock_app.state.inhire.get_integrations.return_value = [
+            {"id": "cp-1", "url": "https://careers.test.com",
+             "jobBoardSettings": {"linkedinId": "123"}}
+        ]
+        mock_app.state.inhire.gen_filter_job_talents.return_value = {"total": 5}
+        mock_app.state.learning = MagicMock()
+        mock_app.state.learning.total_decisions_count.return_value = 20
+
+        await _post_creation_chain(mock_conv, mock_app, "C123", "job-1")
+
+        # Publish should NOT have been called (copilot needs approval)
+        mock_app.state.inhire.publish_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_autopilot_publishes_directly(self, mock_conv, mock_app):
+        """In autopilot mode, publish should execute directly without batch."""
+        from routers.handlers.job_creation import _post_creation_chain
+
+        mock_conv._context["job_data"] = {
+            "title": "Dev Python",
+            "requirements": ["Python", "FastAPI"],
+        }
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_conv.user_id = "U123"
+
+        # Autopilot mode
+        mock_app.state.user_mapping.get_user.return_value = {
+            "autonomy_mode": "autopilot",
+            "auto_advance_threshold": 4.0,
+        }
+        mock_app.state.inhire.get_integrations.return_value = [
+            {"id": "cp-1", "url": "https://careers.test.com",
+             "jobBoardSettings": {"linkedinId": "123"}}
+        ]
+        mock_app.state.inhire.gen_filter_job_talents.return_value = {"total": 5}
+        mock_app.state.inhire.publish_job.return_value = {"activeJobBoards": ["linkedin"]}
+        mock_app.state.learning = MagicMock()
+        mock_app.state.learning.total_decisions_count.return_value = 20
+
+        await _post_creation_chain(mock_conv, mock_app, "C123", "job-1")
+
+        # Autopilot should have published directly
+        mock_app.state.inhire.publish_job.assert_called_once()
+        # No batch_pending
+        batch = mock_conv._context.get("batch_pending")
+        assert not batch
