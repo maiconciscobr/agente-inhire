@@ -832,3 +832,53 @@ class TestFollowupAutoBackoff:
         result = svc.get_effective_intensity("U_TEST_BACKOFF2", "normal")
         assert result == "off"
         svc._redis.delete("inhire:followup_ignores:U_TEST_BACKOFF2")
+
+
+import time
+
+
+class TestFollowupBackoffIntegration:
+    def test_check_alert_response_resets_ignores_on_response(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        if not svc._redis:
+            pytest.skip("Redis not available")
+
+        # Set up: alert was sent recently, ignores = 3
+        svc._redis.set("inhire:followup_ignores:U_TEST_RESET", "3", ex=60)
+        import json
+        svc._redis.setex(
+            "inhire:alert_log:U_TEST_RESET:last", 60,
+            json.dumps({"type": "interview_followup", "ts": time.time()})
+        )
+
+        # Recruiter responds within 30min
+        svc.check_alert_response("U_TEST_RESET")
+
+        # Ignores should be reset
+        assert svc.get_followup_ignores("U_TEST_RESET") == 0
+
+        # Cleanup
+        svc._redis.delete("inhire:followup_ignores:U_TEST_RESET")
+
+    def test_check_alert_response_increments_on_expired(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        if not svc._redis:
+            pytest.skip("Redis not available")
+
+        # Set up: alert was sent 2 hours ago (expired window)
+        import json
+        svc._redis.setex(
+            "inhire:alert_log:U_TEST_INC:last", 60,
+            json.dumps({"type": "interview_followup", "ts": time.time() - 7200})
+        )
+
+        svc.check_alert_response("U_TEST_INC")
+
+        # Should have incremented
+        assert svc.get_followup_ignores("U_TEST_INC") >= 1
+
+        # Cleanup
+        svc._redis.delete("inhire:followup_ignores:U_TEST_INC")
+        svc._redis.delete("inhire:alert_log:U_TEST_INC:last")

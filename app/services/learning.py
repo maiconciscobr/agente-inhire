@@ -191,7 +191,8 @@ class LearningService:
 
     def check_alert_response(self, user_id: str):
         """Called when recruiter sends a message. If within 30min of the last
-        proactive alert, infer the alert was useful and record it.
+        proactive alert, infer the alert was useful, record it, and reset ignores.
+        If alert exists but response window expired, increment ignore counter.
         """
         if not self._redis:
             return
@@ -204,6 +205,12 @@ class LearningService:
             elapsed = time.time() - entry["ts"]
             responded = elapsed <= ALERT_RESPONSE_WINDOW
             self._record_alert_response(user_id, entry["type"], responded)
+
+            if responded:
+                self.reset_followup_ignores(user_id)
+            else:
+                self.increment_followup_ignores(user_id)
+
             # Clear so we don't double-count
             self._redis.delete(key)
         except Exception as e:
