@@ -777,20 +777,22 @@ class ProactiveMonitor:
         if self.learning:
             intensity = self.learning.get_effective_intensity(user_id, configured_intensity)
 
-        if intensity == "off":
-            return  # Recruiter has been ignoring follow-ups, skip
-
-        # Notify on first downgrade
+        # Notify on first downgrade (before early return so "off" notification works)
         if intensity != configured_intensity and intensity in ("gentle", "off"):
             downgrade_key = f"followup_downgrade_notified:{user_id}:{intensity}"
-            if self._redis and not self._redis.exists(downgrade_key):
-                self._redis.set(downgrade_key, "1", ex=86400 * 7)  # Don't re-notify for 7 days
-                await self._send_proactive(
-                    user_id, channel_id,
-                    "Percebi que meus lembretes não estão sendo úteis no momento. "
-                    "Vou reduzir a frequência — quando precisar, é só me chamar! 🤙",
-                    alert_type="backoff_notification",
-                )
+            if self._redis:
+                # Atomic SET NX EX — prevents race condition with multiple jobs
+                notified = self._redis.set(downgrade_key, "1", ex=86400 * 7, nx=True)
+                if notified:
+                    await self._send_proactive(
+                        user_id, channel_id,
+                        "Percebi que meus lembretes não estão sendo úteis no momento. "
+                        "Vou reduzir a frequência — quando precisar, é só me chamar! 🤙",
+                        alert_type="backoff_notification",
+                    )
+
+        if intensity == "off":
+            return  # Recruiter has been ignoring follow-ups, skip
 
         multiplier = {"gentle": 2.0, "normal": 1.0, "aggressive": 0.5}.get(intensity, 1.0)
 

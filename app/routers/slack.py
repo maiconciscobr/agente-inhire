@@ -246,6 +246,8 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
         # Check if recruiter responded to a recent proactive alert
         if hasattr(app.state, "learning"):
             app.state.learning.check_alert_response(user_id)
+            # Any engagement resets follow-up backoff (spec: "um engajamento reseta tudo")
+            app.state.learning.reset_followup_ignores(user_id)
 
         # --- Onboarding: check if user is registered ---
         if not user_mapping.is_registered(user_id):
@@ -936,7 +938,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         await _search_talents(conv, app, channel_id, tool_input)
 
     elif tool == "comparar_vagas":
-        await _compare_jobs(conv, request.app, channel_id)
+        await _compare_jobs(conv, app, channel_id)
 
     elif tool == "smart_match":
         await _smart_match(conv, app, channel_id, tool_input)
@@ -954,7 +956,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
         if job_id:
             from routers.handlers.job_creation import _publish_job
-            await _publish_job(conv, request.app, channel_id, job_id)
+            await _publish_job(conv, app, channel_id, job_id)
         else:
             await slack.post_message(channel_id, "Qual vaga você quer divulgar?")
 
@@ -962,7 +964,7 @@ async def _handle_idle(conv, app, channel_id: str, text: str):
         job_id = tool_input.get("job_id") or conv.get_context("current_job_id")
         if job_id:
             from routers.handlers.job_creation import _auto_configure_job
-            await _auto_configure_job(conv, request.app, channel_id, job_id)
+            await _auto_configure_job(conv, app, channel_id, job_id)
         else:
             await slack.post_message(channel_id, "Preciso saber qual vaga configurar. Me passe o ID.")
 
@@ -1721,12 +1723,23 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
                     await _send(conv, slack, channel_id, "Nenhuma ação pendente.")
                 else:
                     await _send(conv, slack, channel_id, f"Executando {len(pending)} ações... ⏳")
+                    saved_state = conv.state
+                    succeeded = []
+                    failed = []
                     for item in pending:
                         try:
                             await _handle_approval(app, user_id, channel_id, "approve", item["callback_id"])
+                            succeeded.append(item["title"])
                         except Exception as item_err:
                             logger.warning("Erro ao executar batch item %s: %s", item["callback_id"], item_err)
-                    await _send(conv, slack, channel_id, f"✅ {len(pending)} ações executadas!")
+                            failed.append(item["title"])
+                    conv.state = saved_state
+                    if failed:
+                        await _send(conv, slack, channel_id,
+                                    f"⚠️ {len(succeeded)} ação(ões) executada(s), "
+                                    f"{len(failed)} falharam: {', '.join(failed)}")
+                    else:
+                        await _send(conv, slack, channel_id, f"✅ {len(succeeded)} ações executadas!")
                 conv.set_context("batch_pending", [])
             elif action_id == "adjust":
                 for item in pending:

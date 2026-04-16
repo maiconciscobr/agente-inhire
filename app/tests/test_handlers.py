@@ -882,3 +882,71 @@ class TestFollowupBackoffIntegration:
         # Cleanup
         svc._redis.delete("inhire:followup_ignores:U_TEST_INC")
         svc._redis.delete("inhire:alert_log:U_TEST_INC:last")
+
+
+class TestMissingSpecTests:
+    @pytest.mark.asyncio
+    async def test_batch_sends_individual_when_less_than_3(self, mock_conv, mock_app):
+        """1-2 pending actions should send individual approvals, not batch."""
+        from routers.handlers.job_creation import _post_creation_chain
+
+        mock_conv._context["job_data"] = {
+            "title": "Dev Python",
+            "requirements": ["Python", "FastAPI"],
+        }
+        mock_conv._context["current_job_name"] = "Dev Python"
+        mock_conv.user_id = "U123"
+
+        mock_app.state.user_mapping.get_user.return_value = {
+            "autonomy_mode": "copilot",
+            "auto_advance_threshold": 4.0,
+        }
+        # Mock learning to return int (not MagicMock)
+        mock_app.state.learning = MagicMock()
+        mock_app.state.learning.total_decisions_count.return_value = 5
+        # Integrations available → 1 publish action (< 3 threshold)
+        mock_app.state.inhire.get_integrations.return_value = [
+            {"id": "cp-1", "url": "https://careers.test.com",
+             "jobBoardSettings": {"linkedinId": "123"}}
+        ]
+        mock_app.state.inhire.gen_filter_job_talents.return_value = {"total": 5}
+
+        await _post_creation_chain(mock_conv, mock_app, "C123", "job-1")
+
+        # Should NOT have batch_pending (< 3, sent individually)
+        batch = mock_conv._context.get("batch_pending")
+        assert not batch
+        # Publish not auto-executed (copilot)
+        mock_app.state.inhire.publish_job.assert_not_called()
+        # Should have sent individual approval via send_approval_request
+        assert mock_app.state.slack.send_approval_request.called or \
+               mock_app.state.slack.send_message.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_off_intensity_skips_followups(self):
+        """When effective intensity is 'off', _check_stage_followups should return early."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from services.proactive_monitor import ProactiveMonitor
+
+        mock_inhire = AsyncMock()
+        mock_slack = AsyncMock()
+        mock_user_mapping = MagicMock()
+        mock_learning = MagicMock()
+        # Return "off" intensity
+        mock_learning.get_effective_intensity.return_value = "off"
+
+        # Patch Redis connection to avoid real connection
+        with patch("services.proactive_monitor.redis") as mock_redis_module:
+            mock_redis_module.from_url.return_value.ping.side_effect = Exception("no redis")
+            monitor = ProactiveMonitor(mock_inhire, mock_slack, mock_user_mapping, mock_learning)
+
+        monitor._redis = MagicMock()
+        monitor._redis.set.return_value = True  # For downgrade notification
+
+        job = {"id": "job-1", "name": "Dev Python"}
+        user = {"slack_user_id": "U123", "followup_intensity": "normal"}
+
+        await monitor._check_stage_followups(job, user, "C123")
+
+        # Should NOT have called list_job_talents (early return after "off")
+        mock_inhire.list_job_talents.assert_not_called()
