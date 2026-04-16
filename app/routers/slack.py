@@ -1752,6 +1752,64 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
                 conv.set_context("batch_pending", [])
             conv.state = FlowState.IDLE
 
+        # --- Micro-feedback (post-interview quick reaction) ---
+        elif callback_id.startswith("micro_feedback_"):
+            parts = callback_id.split(":", 1)
+            action_type = parts[0].replace("micro_feedback_", "")  # advance, maybe, reject
+            jt_id = parts[1] if len(parts) > 1 else ""
+            feedback_data = conv.get_context("micro_feedback_candidate", {})
+            candidate_name = feedback_data.get("candidate_name", "candidato")
+            job_name = feedback_data.get("job_name", "vaga")
+
+            if action_type == "advance" and jt_id:
+                # Move to next stage
+                try:
+                    job_id = conv.get_context("current_job_id", "")
+                    if job_id:
+                        job = await inhire.get_job(job_id)
+                        stages = job.get("stages", [])
+                        # Find current stage and next
+                        current_stage_order = None
+                        for s in stages:
+                            if s.get("type") in ("culturalFit", "technicalFit"):
+                                current_stage_order = s.get("order", 0)
+                                break
+                        next_stage = None
+                        if current_stage_order is not None:
+                            for s in sorted(stages, key=lambda x: x.get("order", 0)):
+                                if s.get("order", 0) > current_stage_order:
+                                    next_stage = s
+                                    break
+                        if next_stage:
+                            await inhire.move_candidate(jt_id, next_stage["id"])
+                            await _send(conv, slack, channel_id,
+                                        f"✅ *{candidate_name}* avançou para *{next_stage['name']}*!")
+                        else:
+                            await _send(conv, slack, channel_id,
+                                        f"Não encontrei próxima etapa. Quer mover *{candidate_name}* manualmente?")
+                    else:
+                        await _send(conv, slack, channel_id,
+                                    f"👍 Anotado! Quer que eu mova *{candidate_name}* para a próxima etapa?")
+                except Exception as e:
+                    logger.warning("Erro ao avançar candidato via micro-feedback: %s", e)
+                    await _send(conv, slack, channel_id,
+                                f"Não consegui mover agora. Tenta dizer: \"mover {candidate_name} pra próxima etapa\"")
+
+            elif action_type == "maybe":
+                await _send(conv, slack, channel_id,
+                            f"Sem pressa! Quando decidir sobre *{candidate_name}*, me avisa. "
+                            f"Vou lembrar de cobrar em 48h 😉")
+
+            elif action_type == "reject":
+                await _send(conv, slack, channel_id,
+                            f"Entendi. Quer reprovar *{candidate_name}* formalmente? "
+                            f"Posso preparar uma devolutiva se quiser.")
+
+            conv.set_context("micro_feedback_candidate", None)
+            conv.state = FlowState.IDLE
+
     except Exception as e:
         logger.exception("Erro ao processar aprovação: %s", e)
-        await app.state.slack.send_message(channel_id, f"Erro: {e}")
+        await app.state.slack.send_message(
+            channel_id, "Ops, deu um problema ao processar sua resposta. Tenta de novo?"
+        )
