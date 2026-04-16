@@ -331,6 +331,8 @@ Tools `mover_candidatos` e `reprovar_candidatos` agora são **Layer 1 (funcionai
 | 84 | **Botão [Desfazer]** — `_send_with_undo` + `_request_or_auto_approve` wrapper | ✅ | 44 |
 | 85 | **System prompt autônomo** — modos de operação + comportamento em entrevistas no prompt estático | ✅ | 44 |
 | 86 | **Tool `modo_autonomia`** — troca copiloto/piloto + threshold + silenciar via Slack | ✅ | 44 |
+| 87 | **Batch approval** — cadeia pós-vaga acumula ações copilot, envia bloco [Confirma tudo] quando 3+ | ✅ | 45 |
+| 88 | **Auto-backoff follow-ups** — 3 ignores → gentle, 6 → off, resposta reseta tudo | ✅ | 45 |
 
 ---
 
