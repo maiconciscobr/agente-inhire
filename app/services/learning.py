@@ -23,8 +23,9 @@ class LearningService:
         self._redis = None
         try:
             settings = get_settings()
-            self._redis = redis.from_url(settings.redis_url, decode_responses=True)
-            self._redis.ping()
+            r = redis.from_url(settings.redis_url, decode_responses=True)
+            r.ping()
+            self._redis = r
         except Exception as e:
             logger.warning("Redis indisponível para learning: %s", e)
 
@@ -354,3 +355,51 @@ class LearningService:
         data["reversals_recent"] = 0
         data["auto_advances_recent"] = 0
         self._save_confidence(recruiter_id, data)
+
+    # --- Follow-up auto-backoff ---
+
+    FOLLOWUP_IGNORES_PREFIX = "inhire:followup_ignores:"
+    FOLLOWUP_IGNORES_TTL = 86400 * 30  # 30 days
+
+    def increment_followup_ignores(self, user_id: str):
+        """Increment consecutive follow-up ignore counter."""
+        if not self._redis:
+            return
+        try:
+            key = f"{self.FOLLOWUP_IGNORES_PREFIX}{user_id}"
+            pipe = self._redis.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, self.FOLLOWUP_IGNORES_TTL)
+            pipe.execute()
+        except Exception as e:
+            logger.warning("Erro ao incrementar followup ignores: %s", e)
+
+    def reset_followup_ignores(self, user_id: str):
+        """Reset ignore counter (recruiter responded to a follow-up)."""
+        if not self._redis:
+            return
+        try:
+            self._redis.delete(f"{self.FOLLOWUP_IGNORES_PREFIX}{user_id}")
+        except Exception as e:
+            logger.warning("Erro ao resetar followup ignores: %s", e)
+
+    def get_followup_ignores(self, user_id: str) -> int:
+        """Get current consecutive ignore count."""
+        if not self._redis:
+            return 0
+        try:
+            val = self._redis.get(f"{self.FOLLOWUP_IGNORES_PREFIX}{user_id}")
+            return int(val) if val else 0
+        except Exception:
+            return 0
+
+    def get_effective_intensity(self, user_id: str, configured_intensity: str) -> str:
+        """Get effective follow-up intensity, considering auto-backoff.
+        Returns the downgraded intensity based on consecutive ignore count.
+        """
+        ignores = self.get_followup_ignores(user_id)
+        if ignores >= 6:
+            return "off"
+        if ignores >= 3:
+            return "gentle"
+        return configured_intensity

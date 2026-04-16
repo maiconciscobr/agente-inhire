@@ -792,3 +792,43 @@ class TestPostCreationChainBatch:
         # No batch_pending
         batch = mock_conv._context.get("batch_pending")
         assert not batch
+
+
+class TestFollowupAutoBackoff:
+    def test_increment_followup_ignores(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        # Should not crash even without Redis
+        svc.increment_followup_ignores("U123")
+
+    def test_reset_followup_ignores(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        svc.reset_followup_ignores("U123")
+
+    def test_get_effective_intensity_default(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        # No data → normal
+        result = svc.get_effective_intensity("U123", "normal")
+        assert result == "normal"
+
+    def test_3_ignores_downgrades_to_gentle(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        if not svc._redis:
+            pytest.skip("Redis not available")
+        svc._redis.set("inhire:followup_ignores:U_TEST_BACKOFF", "3", ex=60)
+        result = svc.get_effective_intensity("U_TEST_BACKOFF", "normal")
+        assert result == "gentle"
+        svc._redis.delete("inhire:followup_ignores:U_TEST_BACKOFF")
+
+    def test_6_ignores_downgrades_to_off(self):
+        from services.learning import LearningService
+        svc = LearningService()
+        if not svc._redis:
+            pytest.skip("Redis not available")
+        svc._redis.set("inhire:followup_ignores:U_TEST_BACKOFF2", "6", ex=60)
+        result = svc.get_effective_intensity("U_TEST_BACKOFF2", "normal")
+        assert result == "off"
+        svc._redis.delete("inhire:followup_ignores:U_TEST_BACKOFF2")
