@@ -2,6 +2,78 @@
 
 ---
 
+## Sessão 45 — 16 de abril de 2026
+
+### Objetivo
+Batch approval visual + auto-backoff de follow-ups + testes E2E via Slack.
+
+### Processo
+1. Brainstorming: 2 features, 4 perguntas de design, decisões rápidas
+2. Spec escrita e commitada
+3. Plano de 6 tasks (TDD, commits frequentes)
+4. Subagent-driven development: 6 tasks implementadas por subagents (sonnet)
+5. **3 revisores especializados em paralelo** (Opus):
+   - Spec Compliance: encontrou 2 testes faltando + semântica incorreta do reset
+   - Code Quality: encontrou notificação dead code + batch state corruption
+   - Silent Failure Hunter: encontrou `request.app` pré-existente (3 features quebradas!)
+6. 6 bugs corrigidos em 1 commit
+7. Deploy + testes E2E via Slack MCP
+
+### Implementações
+
+**10 commits, 101 testes passando:**
+
+| # | Commit | O que faz |
+|---|---|---|
+| 1 | `ad058dd` | Spec: batch approval + auto-backoff design |
+| 2 | `54c8943` | Plano de implementação (6 tasks) |
+| 3 | `722a9df` | `_send_batch_approval` em helpers.py |
+| 4 | `7b124d2` | Handler `batch_approval` no slack.py interactions |
+| 5 | `9b9593f` | Batch integrado em `_post_creation_chain` (+ publish na cadeia) |
+| 6 | `9deb763` | Contador de ignores no LearningService |
+| 7 | `97bb3b9` | Auto-backoff integrado em `check_alert_response` + `_check_stage_followups` |
+| 8 | `7127c8a` | CLAUDE.md atualizado (melhorias 87-88) |
+| 9 | `2190b9a` | Fix: 6 bugs da revisão (B1-B6) |
+| 10 | `c6ba64b` | Fix: comandos globais usam `startswith` (sufixo Slack) |
+
+### Testes E2E via Slack (MCP)
+
+| Teste | Resultado |
+|---|---|
+| Cancelar conversa | ✅ (fix startswith necessário) |
+| Silenciar 2h | ✅ "Notificações silenciadas por 2h" |
+| Modo piloto automático | ✅ troca + aviso poucos dados |
+| Volta pra copiloto | ✅ |
+| Listar vagas | ✅ |
+
+### Bugs encontrados e corrigidos
+
+| Bug | Origem | Fix |
+|---|---|---|
+| Batch handler não salva/restaura `conv.state` | Review code quality | Salva state antes do loop, restaura depois |
+| Notificação de downgrade "off" é dead code | Review code quality | Movida antes do early return |
+| Reset de ignores só funciona com alerta pendente <30min | Review spec compliance | `reset_followup_ignores` chamado em todo DM |
+| Race condition na notificação de downgrade | Review silent failure | `SET NX EX` atômico |
+| `request.app` em `_handle_idle` (3 features quebradas) | Review silent failure | Trocado por `app` |
+| Comandos globais falham com sufixo Slack | Teste E2E | `startswith` ao invés de match exato |
+
+### Decisões técnicas
+- **Batch threshold 3:** Na cadeia atual só publish é acumulado (1 item). O batch de 3+ funciona mas só será exercitado quando mais ações forem adicionadas à cadeia. Infraestrutura pronta.
+- **Reset incondicional:** Qualquer DM reseta o contador de ignores (mais generoso que a spec original de 30min window). Previne falsos positivos com recrutadores ocupados.
+- **3 revisores >> 1:** Cada um encontrou coisas que os outros não viram. O `request.app` era um bug pré-existente que quebrava 3 features sem ninguém saber.
+
+### Pendente (sessão 46)
+
+| Item | Esforço |
+|---|---|
+| Testar micro-feedback pós-entrevista E2E | 30min |
+| Testar auto-screening webhook com candidato real | 30min |
+| Testar circuit breaker com reversões reais | 30min |
+| Corrigir issues pré-existentes do Silent Failure Hunter (#6-#12) | 3h |
+| Push final + deploy | 15min |
+
+---
+
 ## Sessão 44 — 15 de abril de 2026
 
 ### Objetivo
