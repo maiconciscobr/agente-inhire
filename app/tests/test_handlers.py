@@ -631,3 +631,37 @@ class TestSuggestAutonomyMode:
         }
         mode, reason = _suggest_autonomy_mode(job_data, decisions_count=25)
         assert mode == "autopilot"
+
+
+class TestBatchApproval:
+    @pytest.mark.asyncio
+    async def test_batch_sends_block_when_3_plus_actions(self, mock_conv, mock_app):
+        from routers.handlers.helpers import _send_batch_approval
+
+        actions = [
+            {"callback_id": "publish_job_approval", "title": "Divulgar no LinkedIn"},
+            {"callback_id": "shortlist_approval", "title": "Mover 3 candidatos para Entrevista"},
+            {"callback_id": "whatsapp_free_approval", "title": "Enviar shortlist por WhatsApp"},
+        ]
+        await _send_batch_approval(mock_conv, mock_app.state.slack, "C123", actions)
+
+        mock_app.state.slack.send_message.assert_called_once()
+        call_kwargs = mock_app.state.slack.send_message.call_args
+        blocks = call_kwargs[1]["blocks"] if "blocks" in (call_kwargs[1] or {}) else call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        assert blocks is not None
+
+    @pytest.mark.asyncio
+    async def test_batch_stores_pending_in_context(self, mock_conv, mock_app):
+        from routers.handlers.helpers import _send_batch_approval
+
+        actions = [
+            {"callback_id": "publish_job_approval", "title": "Divulgar no LinkedIn"},
+            {"callback_id": "shortlist_approval", "title": "Mover candidatos"},
+            {"callback_id": "whatsapp_free_approval", "title": "Enviar WhatsApp"},
+        ]
+        await _send_batch_approval(mock_conv, mock_app.state.slack, "C123", actions)
+
+        stored = mock_conv._context.get("batch_pending")
+        assert stored is not None
+        assert len(stored) == 3
+        assert stored[0]["callback_id"] == "publish_job_approval"

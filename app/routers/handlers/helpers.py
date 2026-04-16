@@ -324,6 +324,42 @@ async def _send_with_undo(conv, slack, channel_id: str, text: str, undo_callback
     await slack.send_message(channel_id, text, blocks=blocks)
 
 
+async def _send_batch_approval(conv, slack, channel_id: str, actions: list[dict]):
+    """Send a batch approval block when copilot has 3+ pending actions.
+
+    Each action dict has: {"callback_id": str, "title": str}
+    Stores the list in conv context for the batch_approval handler to process.
+    """
+    conv.set_context("batch_pending", actions)
+
+    items = "\n".join(f"  • {a['title']}" for a in actions)
+    text = f"Tenho {len(actions)} ações pendentes pra sua aprovação:\n{items}"
+    conv.add_message("assistant", text)
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✅ Confirma tudo"},
+                    "style": "primary",
+                    "value": "batch_approval",
+                    "action_id": "approve",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📝 Revisar uma a uma"},
+                    "value": "batch_approval",
+                    "action_id": "adjust",
+                },
+            ],
+        },
+    ]
+    await slack.send_message(channel_id, text, blocks=blocks)
+
+
 async def _request_or_auto_approve(conv, app, channel_id: str, action: str,
                                     title: str, details: str, callback_id: str,
                                     execute_fn, flow_state=None):
