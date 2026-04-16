@@ -287,8 +287,8 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
 
         text_lower = text.lower().strip()
 
-        # Global commands
-        if text_lower in ("cancelar", "reset", "recomeçar"):
+        # Global commands (startswith handles Slack attribution suffixes)
+        if any(text_lower.startswith(cmd) for cmd in ("cancelar", "reset", "recomeçar")):
             conversations.reset(user_id, channel_id)
             await slack.send_message(channel_id, "Pronto, conversa zerada! Como posso te ajudar?")
             return
@@ -304,7 +304,7 @@ async def _handle_dm(app, user_id: str, channel_id: str, text: str):
             return
 
         # Show full briefing details if recruiter requests them
-        if text_lower.strip() in ("detalhes", "detalhe", "ver detalhes", "relatório completo", "relatorio completo"):
+        if any(text_lower.startswith(cmd) for cmd in ("detalhes", "detalhe", "ver detalhes", "relatório completo", "relatorio completo")):
             details = conv.get_context("pending_briefing_details")
             if details:
                 conv.set_context("pending_briefing_details", None)
