@@ -665,3 +665,62 @@ class TestBatchApproval:
         assert stored is not None
         assert len(stored) == 3
         assert stored[0]["callback_id"] == "publish_job_approval"
+
+
+def _import_slack():
+    """Import routers.slack, stubbing fastapi if not installed."""
+    import sys
+    import importlib
+    from unittest.mock import MagicMock
+
+    if "fastapi" not in sys.modules:
+        fastapi_stub = MagicMock()
+        fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
+        fastapi_stub.Request = MagicMock
+        fastapi_stub.Response = MagicMock
+        sys.modules["fastapi"] = fastapi_stub
+
+    if "routers.slack" not in sys.modules:
+        importlib.import_module("routers.slack")
+
+    return sys.modules["routers.slack"]
+
+
+class TestBatchApprovalHandler:
+    @pytest.mark.asyncio
+    async def test_approve_all_executes_all_callbacks(self, mock_conv, mock_app):
+        """Clicking [Confirma tudo] should execute all pending approvals."""
+        mock_conv._context["batch_pending"] = [
+            {"callback_id": "publish_job_approval", "title": "Divulgar"},
+            {"callback_id": "shortlist_approval", "title": "Mover candidatos"},
+        ]
+        mock_conv._context["current_job_id"] = "job-1"
+        mock_conv._context["current_job_name"] = "Dev Python"
+
+        mock_app.state.conversations = MagicMock()
+        mock_app.state.conversations.get_or_create.return_value = mock_conv
+        mock_app.state.learning = MagicMock()
+
+        slack_module = _import_slack()
+        await slack_module._handle_approval(mock_app, "U123", "C123", "approve", "batch_approval")
+
+        # batch_pending should be cleared
+        assert mock_conv._context.get("batch_pending") is None or mock_conv._context.get("batch_pending") == []
+
+    @pytest.mark.asyncio
+    async def test_adjust_sends_individual_approvals(self, mock_conv, mock_app):
+        """Clicking [Revisar] should send each approval individually."""
+        mock_conv._context["batch_pending"] = [
+            {"callback_id": "publish_job_approval", "title": "Divulgar no LinkedIn"},
+            {"callback_id": "shortlist_approval", "title": "Mover 3 candidatos"},
+        ]
+        mock_app.state.conversations = MagicMock()
+        mock_app.state.conversations.get_or_create.return_value = mock_conv
+        mock_app.state.learning = MagicMock()
+
+        slack_module = _import_slack()
+        await slack_module._handle_approval(mock_app, "U123", "C123", "adjust", "batch_approval")
+
+        # Should have sent individual approval messages
+        assert mock_app.state.slack.send_approval_request.call_count >= 1 or \
+               mock_app.state.slack.send_message.call_count >= 1

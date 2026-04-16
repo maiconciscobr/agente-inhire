@@ -14,7 +14,7 @@ from services.conversation import FlowState
 # Extracted handler modules (refactored session 26)
 from routers.handlers.helpers import (
     _send, _send_approval, _request_or_auto_approve, _resolve_job_id, _build_dynamic_context,
-    _suggest_next_action, _tool_not_available, _talent_phone,
+    _suggest_next_action, _tool_not_available, _talent_phone, _send_batch_approval,
     _NOT_AVAILABLE_MESSAGES, _INHIRE_GUIDES,
 )
 from services.inhire_client import WhatsAppWindowExpired, WhatsAppInvalidPhone
@@ -1711,6 +1711,32 @@ async def _handle_approval(app, user_id: str, channel_id: str, action_id: str, c
                     )
             elif action_id in ("adjust", "reject"):
                 await _send(conv, slack, channel_id, "Ok, candidato não adicionado.")
+            conv.state = FlowState.IDLE
+
+        # --- Batch approval (grouped copilot actions) ---
+        elif callback_id == "batch_approval":
+            pending = conv.get_context("batch_pending", [])
+            if action_id == "approve":
+                if not pending:
+                    await _send(conv, slack, channel_id, "Nenhuma ação pendente.")
+                else:
+                    await _send(conv, slack, channel_id, f"Executando {len(pending)} ações... ⏳")
+                    for item in pending:
+                        try:
+                            await _handle_approval(app, user_id, channel_id, "approve", item["callback_id"])
+                        except Exception as item_err:
+                            logger.warning("Erro ao executar batch item %s: %s", item["callback_id"], item_err)
+                    await _send(conv, slack, channel_id, f"✅ {len(pending)} ações executadas!")
+                conv.set_context("batch_pending", [])
+            elif action_id == "adjust":
+                for item in pending:
+                    await _send_approval(
+                        conv, slack, channel_id,
+                        title=item["title"],
+                        details=f"Aprovar: {item['title']}?",
+                        callback_id=item["callback_id"],
+                    )
+                conv.set_context("batch_pending", [])
             conv.state = FlowState.IDLE
 
     except Exception as e:
