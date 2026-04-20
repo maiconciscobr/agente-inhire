@@ -1,5 +1,63 @@
 # Agente InHire — Diário do Projeto
 
+> **Papel deste arquivo:** registro histórico por sessão. Cada bloco "Pendente (sessão X)" é um snapshot daquele momento — não é fonte viva de trabalho. Para o que ainda falta *hoje*, consulte [O_QUE_FALTA.md](O_QUE_FALTA.md).
+
+---
+
+## Sessão 46 — 20 de abril de 2026
+
+### Objetivo
+Organizar os gaps do InHire no Linear como tasks autônomas pra rodar enquanto Maicon estiver de folga.
+
+### Processo
+1. Definido papel separado de DIARIO (histórico) vs O_QUE_FALTA (fonte viva) com links recíprocos
+2. Limpeza: "Contraproposta e renegociação" removida do O_QUE_FALTA (ergonomia, não gap — cancelar+recriar já resolve hoje)
+3. Lista filtrada: 14 gaps do InHire (3 ignorados como "trabalho nosso": pipeline customizado, programa de indicação, classificação Gostei/Amei)
+4. Exploração paralela do monorepo `inhire-workspace` via 6 agentes Explore (job-talents, offer-letter, forms, custom-data-manager+jobs, enrichment+files+auth, comments+comms+search-talents)
+5. Criação no Linear: projeto **Agente Eli** + label **Agente** no time Juliet
+6. 14 tasks criadas seguindo o template do Naian (Agent Protocol Phase 1+2, Plano Técnico com paths reais do monorepo)
+7. Mensagem ao Naian (Tech Lead Juliet) via Slack com o mapa + intenção de rodar durante folga
+
+### Linear — Projeto Agente Eli
+
+- **URL:** https://linear.app/inhire/project/agente-eli-e50140df69cb
+- **Team:** Juliet • **Label:** Agente
+- **IDs:** JUL-357, JUL-358, JUL-359, JUL-362, JUL-363, JUL-364, JUL-365, JUL-366, JUL-367, JUL-368, JUL-369, JUL-370, JUL-371, JUL-372
+
+| # | ID | Título | Serviço |
+|---|---|---|---|
+| 1 | JUL-357 | Campos personalizados em vagas | jobs + custom-data-manager |
+| 2 | JUL-362 | Smart CV programático | enrichment |
+| 3 | JUL-358 | Persistir notas IA em comments | comments |
+| 4 | JUL-359 | Download CV em PDF (ability) | auth + files |
+| 5 | JUL-363 | Ability ScorecardJob | auth + forms |
+| 6 | JUL-364 | Kit Entrevista com IA (rota pública) | forms |
+| 7 | JUL-365 | Google Meet / Outlook service-account | job-talents + auth |
+| 8 | JUL-366 | Mindsight (Big Five, fit, técnicos) | forms |
+| 9 | JUL-367 | Webhook entrevista concluída / no-show | job-talents |
+| 10 | JUL-372 | Webhooks outbound status oferta | offer-letter |
+| 11 | JUL-368 | Motivo de recusa da oferta | offer-letter |
+| 12 | JUL-369 | Histórico de comunicação | comms |
+| 13 | JUL-370 | Grupos nomeados de talentos | search-talents + talents |
+| 14 | JUL-371 | Exportação de relatórios | novo serviço (cross-service) |
+
+### Decisões de processo
+- **Template rígido:** cada task tem Agent Protocol com Phase 1 (valida + investiga, marca BLOCKED se faltar info) e Phase 2 (implementa + PR draft + aviso #updates-juliet). Plano Técnico referencia paths reais (ex: `src/services/offer-letter/src/handlers/webhooks.ts:54-166`).
+- **Filtro de gap:** só incluir o que impede operação hoje. "Cancelar + recriar" não é gap — é ergonomia. Memória `feedback_real_gaps_only.md` registra isso.
+- **Tom insider:** mensagens pra colegas do InHire usam "a API" / "nossa", nunca "de vocês". Memória `feedback_inhire_insider_tone.md` registra.
+
+### Memórias salvas
+- `feedback_real_gaps_only.md` — distinguir gap funcional de ergonomia ao mapear pendências
+- `feedback_inhire_insider_tone.md` — Maicon é InHire, escrever como insider; colegas já sabem do Agente Eli
+
+### Pendente (sessão 47)
+| Item | Esforço |
+|---|---|
+| Aguardar resposta do Naian sobre mal-dimensionamento ou gaps faltando | — |
+| Acompanhar agente implementador começar Phase 1 das tasks | — |
+| Continuar pendências da sessão 45 (micro-feedback E2E, auto-screening E2E, circuit breaker E2E) | 1h30 |
+| Corrigir issues pré-existentes do Silent Failure Hunter (#6-#12) | 3h |
+
 ---
 
 ## Sessão 45 — 16 de abril de 2026
